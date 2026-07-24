@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
-    QProgressBar,
     QSizePolicy,
     QStackedWidget,
     QTableWidget,
@@ -72,6 +71,43 @@ class LineChart(QWidget):
             painter.drawLine(points[index - 1], points[index])
 
 
+class ScoreGauge(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._score = 0
+        self.setMinimumSize(124, 96)
+
+    def set_score(self, score: int) -> None:
+        self._score = max(0, min(100, score))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(16, 8, -16, 6)
+        gauge_rect = rect.adjusted(4, 6, -4, -10)
+
+        bg_pen = QPen(QColor("#e7edf5"), 10)
+        bg_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawArc(gauge_rect, 210 * 16, -240 * 16)
+
+        color = QColor("#41be69") if self._score >= 80 else QColor("#2f80ed")
+        if self._score < 60:
+            color = QColor("#f59e0b")
+        value_pen = QPen(color, 10)
+        value_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(value_pen)
+        painter.drawArc(gauge_rect, 210 * 16, int(-240 * 16 * (self._score / 100)))
+
+        painter.setPen(color)
+        font = painter.font()
+        font.setPointSize(25)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignCenter, str(self._score))
+
+
 class MainWindow(QMainWindow):
     start_requested = Signal()
     stop_requested = Signal()
@@ -91,6 +127,7 @@ class MainWindow(QMainWindow):
         self.wear_time_value = QLabel("--")
         self.bluetooth_status_value = QLabel("JDY-24M 模拟")
         self.time_value = QLabel("--")
+        self.score_gauge = ScoreGauge()
 
         self.pitch_value = QLabel("--")
         self.roll_value = QLabel("--")
@@ -176,12 +213,7 @@ class MainWindow(QMainWindow):
             }
             QProgressBar {
                 border: none;
-                border-radius: 5px;
-                background: #e8eef6;
-                min-height: 10px;
-                max-height: 10px;
             }
-            QProgressBar::chunk { border-radius: 5px; background: #2f80ed; }
             """
         )
 
@@ -312,10 +344,42 @@ class MainWindow(QMainWindow):
 
         top_cards = QHBoxLayout()
         top_cards.setSpacing(16)
-        top_cards.addWidget(self._summary_card("健康评分", self.health_score_value, "优秀", "#41be69"))
-        top_cards.addWidget(self._summary_card("当前状态", self.posture_value, "持续时间 --", "#41be69"))
-        top_cards.addWidget(self._summary_card("提醒模式", self.mode_value, "震动强度 --", "#2f80ed"))
-        top_cards.addWidget(self._summary_card("今日佩戴时长", self.wear_time_value, "目标：--", "#7c3aed"))
+        top_cards.addWidget(
+            self._summary_card(
+                "健康评分",
+                self.health_score_value,
+                "较昨日 ↑ --",
+                "#41be69",
+                "gauge",
+            )
+        )
+        top_cards.addWidget(
+            self._summary_card(
+                "当前状态",
+                self.posture_value,
+                "持续时间 --",
+                "#41be69",
+                "text",
+            )
+        )
+        top_cards.addWidget(
+            self._summary_card(
+                "提醒模式",
+                self.mode_value,
+                "震动强度：--",
+                "#2f80ed",
+                "text",
+            )
+        )
+        top_cards.addWidget(
+            self._summary_card(
+                "今日佩戴时长",
+                self.wear_time_value,
+                "目标：--",
+                "#7c3aed",
+                "text",
+            )
+        )
 
         body = QHBoxLayout()
         body.setSpacing(16)
@@ -386,26 +450,40 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._metric_panel("数据格式", QLabel("JSON"), "score/state/pitch/roll/mode"), 1, 1)
         return page
 
-    def _summary_card(self, title: str, value_widget: QLabel, hint: str, color: str) -> QWidget:
+    def _summary_card(
+        self,
+        title: str,
+        value_widget: QLabel,
+        hint: str,
+        color: str,
+        display: str,
+    ) -> QWidget:
         card = self._card()
-        card.setMinimumHeight(126)
+        card.setMinimumHeight(158)
+        card.setMaximumHeight(172)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(6)
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 17px; font-weight: 800;")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 18px; font-weight: 900; color: #0d1728;")
         value_widget.setAlignment(Qt.AlignCenter)
-        value_widget.setStyleSheet(f"font-size: 34px; font-weight: 900; color: {color};")
+        value_widget.setWordWrap(True)
+        value_widget.setStyleSheet(
+            f"font-size: 30px; font-weight: 900; color: {color}; line-height: 1.05;"
+        )
         hint_label = QLabel(hint)
         hint_label.setAlignment(Qt.AlignCenter)
-        hint_label.setStyleSheet("color: #667085; font-weight: 700;")
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setValue(65)
+        hint_label.setStyleSheet("color: #667085; font-size: 14px; font-weight: 700;")
         layout.addWidget(title_label)
-        layout.addStretch(1)
-        layout.addWidget(value_widget)
+        if display == "gauge":
+            layout.addWidget(self.score_gauge, 1, Qt.AlignCenter)
+            value_widget.hide()
+        else:
+            layout.addStretch(1)
+            layout.addWidget(value_widget)
+            layout.addStretch(1)
         layout.addWidget(hint_label)
-        layout.addWidget(bar)
         return card
 
     def _realtime_panel(self) -> QWidget:
@@ -605,8 +683,9 @@ class MainWindow(QMainWindow):
         self._roll_values = self._roll_values[-40:]
 
         self.health_score_value.setText(str(sample.score))
+        self.score_gauge.set_score(sample.score)
         self.posture_value.setText(sample.state)
-        self.mode_value.setText(sample.mode)
+        self.mode_value.setText(self._display_mode(sample.mode))
         self.wear_time_value.setText("--")
         self.abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.dashboard_abnormal_count_value.setText(f"{self._abnormal_count} 次")
@@ -655,6 +734,12 @@ class MainWindow(QMainWindow):
 
         while self.history_table.rowCount() > 120:
             self.history_table.removeRow(self.history_table.rowCount() - 1)
+
+    @staticmethod
+    def _display_mode(mode: str) -> str:
+        if "SIM" in mode.upper():
+            return "普通模式"
+        return mode.replace("_", " ")
 
     def _toggle_receiving(self) -> None:
         if self.receive_button.isChecked():
