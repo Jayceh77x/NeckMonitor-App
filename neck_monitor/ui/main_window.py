@@ -33,13 +33,13 @@ class MainWindow(QMainWindow):
         self.health_score_value = QLabel("100")
         self.posture_value = QLabel("等待数据")
         self.abnormal_count_value = QLabel("0")
-        self.bluetooth_status_value = QLabel("模拟数据")
+        self.bluetooth_status_value = QLabel("JDY-24M 模拟")
 
         self.pitch_value = QLabel("--")
         self.roll_value = QLabel("--")
         self.ai_status_value = QLabel("未启用")
         self.confidence_value = QLabel("--")
-        self.history_table = QTableWidget(0, 6)
+        self.history_table = QTableWidget(0, 7)
 
         self._build_ui()
 
@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar(self))
-        self.statusBar().showMessage("当前使用模拟数据源，蓝牙串口接口已预留")
+        self.statusBar().showMessage("当前使用 JDY-24M JSON 模拟数据源")
 
     def _build_header(self) -> QWidget:
         header = QWidget()
@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
 
         self.history_table.setHorizontalHeaderLabels(
-            ["时间", "Pitch", "Roll", "Yaw", "压力", "姿态"]
+            ["时间", "评分", "Pitch", "Roll", "姿态", "模式", "数据源"]
         )
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -263,35 +263,35 @@ class MainWindow(QMainWindow):
         return card
 
     def update_sample(self, sample: NeckSensorSample, sample_count: int) -> None:
-        posture = self._classify_posture(sample)
-        abnormal = posture != "正常"
+        abnormal = sample.state != "正常"
         if abnormal:
             self._abnormal_count += 1
 
-        health_score = max(0, 100 - self._abnormal_count * 2)
-
-        self.health_score_value.setText(str(health_score))
-        self.posture_value.setText(posture)
+        self.health_score_value.setText(str(sample.score))
+        self.posture_value.setText(sample.state)
         self.abnormal_count_value.setText(str(self._abnormal_count))
-        self.bluetooth_status_value.setText("模拟接收中")
+        self.bluetooth_status_value.setText("JDY-24M 接收中")
 
         self.pitch_value.setText(f"{sample.pitch:.1f}")
         self.roll_value.setText(f"{sample.roll:.1f}")
         self.ai_status_value.setText("未启用")
         self.confidence_value.setText("--")
 
-        self._append_history(sample, posture)
-        self.statusBar().showMessage(f"已接收 {sample_count} 条模拟数据")
+        self._append_history(sample)
+        self.statusBar().showMessage(
+            f"已接收 {sample_count} 条 JDY-24M JSON 模拟数据，模式：{sample.mode}"
+        )
 
-    def _append_history(self, sample: NeckSensorSample, posture: str) -> None:
+    def _append_history(self, sample: NeckSensorSample) -> None:
         self.history_table.insertRow(0)
         values = [
             sample.timestamp.strftime("%H:%M:%S"),
+            str(sample.score),
             f"{sample.pitch:.1f}",
             f"{sample.roll:.1f}",
-            f"{sample.yaw:.1f}",
-            f"{sample.pressure:.2f}",
-            posture,
+            sample.state,
+            sample.mode,
+            "JDY-24M",
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
@@ -302,18 +302,14 @@ class MainWindow(QMainWindow):
             self.history_table.removeRow(self.history_table.rowCount() - 1)
 
     def _start_clicked(self) -> None:
-        self.bluetooth_status_value.setText("模拟接收中")
+        self.bluetooth_status_value.setText("JDY-24M 接收中")
         self.start_requested.emit()
 
     def _stop_clicked(self) -> None:
         self.bluetooth_status_value.setText("已停止")
         self.stop_requested.emit()
-        self.statusBar().showMessage("模拟数据接收已停止")
+        self.statusBar().showMessage("JDY-24M 模拟数据接收已停止")
 
-    @staticmethod
-    def _classify_posture(sample: NeckSensorSample) -> str:
-        if abs(sample.pitch) > 20:
-            return "低头异常" if sample.pitch < 0 else "仰头异常"
-        if abs(sample.roll) > 15:
-            return "侧倾异常"
-        return "正常"
+    def update_bluetooth_status(self, connected: bool) -> None:
+        status = "JDY-24M 接收中" if connected else "已停止"
+        self.bluetooth_status_value.setText(status)
