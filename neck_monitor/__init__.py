@@ -1,0 +1,2 @@
+"""NeckMonitor App package."""
+
