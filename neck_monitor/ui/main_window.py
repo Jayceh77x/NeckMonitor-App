@@ -40,6 +40,9 @@ class MainWindow(QMainWindow):
         self.ai_status_value = QLabel("未启用")
         self.confidence_value = QLabel("--")
         self.history_table = QTableWidget(0, 7)
+        self.receive_button = QPushButton("停止接收")
+        self.receive_button.setCheckable(True)
+        self.receive_button.setChecked(True)
 
         self._build_ui()
 
@@ -86,17 +89,26 @@ class MainWindow(QMainWindow):
                 background: #edf6ff;
                 border-color: #60a5fa;
             }
+            QPushButton:checked {
+                background: #2563eb;
+                border-color: #2563eb;
+                color: #ffffff;
+            }
             QTableWidget {
-                border: none;
+                border: 1px solid #d9e0ea;
+                border-radius: 8px;
                 gridline-color: #e5e7eb;
                 selection-background-color: #dbeafe;
+                background: #ffffff;
+                alternate-background-color: #f8fafc;
+                font-size: 15px;
             }
             QHeaderView::section {
-                background: #f1f5f9;
-                color: #334155;
+                background: #eaf2ff;
+                color: #1e3a8a;
                 border: none;
                 border-bottom: 1px solid #d9e0ea;
-                padding: 8px;
+                padding: 10px;
                 font-weight: 600;
             }
             """
@@ -133,15 +145,11 @@ class MainWindow(QMainWindow):
         title_area.addWidget(title)
         title_area.addWidget(subtitle)
 
-        start_button = QPushButton("开始接收")
-        stop_button = QPushButton("停止接收")
-        start_button.clicked.connect(self._start_clicked)
-        stop_button.clicked.connect(self._stop_clicked)
+        self.receive_button.clicked.connect(self._toggle_receiving)
 
         layout.addLayout(title_area)
         layout.addStretch(1)
-        layout.addWidget(start_button)
-        layout.addWidget(stop_button)
+        layout.addWidget(self.receive_button)
         return header
 
     def _build_dashboard_page(self) -> QWidget:
@@ -209,6 +217,9 @@ class MainWindow(QMainWindow):
         self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.history_table.setAlternatingRowColors(True)
+        self.history_table.setShowGrid(False)
+        self.history_table.setMinimumHeight(390)
+        self.history_table.verticalHeader().setDefaultSectionSize(42)
 
         layout.addWidget(self.history_table)
         return page
@@ -217,16 +228,17 @@ class MainWindow(QMainWindow):
         self, title: str, value_widget: QLabel, unit: str, accent_color: str
     ) -> QWidget:
         card = QFrame()
+        card.setObjectName("metricCard")
         card.setFrameShape(QFrame.StyledPanel)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         card.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#metricCard {{
                 background: #ffffff;
                 border: 1px solid #d9e0ea;
                 border-radius: 8px;
             }}
-            QLabel#accent {{
+            QLabel#metricAccent {{
                 background: {accent_color};
                 border-radius: 3px;
                 min-width: 34px;
@@ -242,16 +254,18 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
 
         accent = QLabel()
-        accent.setObjectName("accent")
+        accent.setObjectName("metricAccent")
 
         title_label = QLabel(title)
-        title_label.setStyleSheet("color: #64748b; font-weight: 600;")
+        title_label.setStyleSheet("border: none; color: #64748b; font-weight: 600;")
 
         value_row = QHBoxLayout()
-        value_widget.setStyleSheet("font-size: 34px; font-weight: 700; color: #0f172a;")
+        value_widget.setStyleSheet(
+            "border: none; font-size: 34px; font-weight: 700; color: #0f172a;"
+        )
         value_widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         unit_label = QLabel(unit)
-        unit_label.setStyleSheet("color: #64748b; font-weight: 600;")
+        unit_label.setStyleSheet("border: none; color: #64748b; font-weight: 600;")
         value_row.addWidget(value_widget)
         value_row.addWidget(unit_label)
         value_row.addStretch(1)
@@ -296,16 +310,24 @@ class MainWindow(QMainWindow):
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
             item.setTextAlignment(Qt.AlignCenter)
+            item.setForeground(Qt.red if sample.state != "正常" else Qt.darkGreen)
+            if column in (1, 4):
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
             self.history_table.setItem(0, column, item)
 
         while self.history_table.rowCount() > 100:
             self.history_table.removeRow(self.history_table.rowCount() - 1)
 
-    def _start_clicked(self) -> None:
-        self.bluetooth_status_value.setText("JDY-24M 接收中")
-        self.start_requested.emit()
+    def _toggle_receiving(self) -> None:
+        if self.receive_button.isChecked():
+            self.receive_button.setText("停止接收")
+            self.bluetooth_status_value.setText("JDY-24M 接收中")
+            self.start_requested.emit()
+            return
 
-    def _stop_clicked(self) -> None:
+        self.receive_button.setText("开始接收")
         self.bluetooth_status_value.setText("已停止")
         self.stop_requested.emit()
         self.statusBar().showMessage("JDY-24M 模拟数据接收已停止")
@@ -313,3 +335,5 @@ class MainWindow(QMainWindow):
     def update_bluetooth_status(self, connected: bool) -> None:
         status = "JDY-24M 接收中" if connected else "已停止"
         self.bluetooth_status_value.setText(status)
+        self.receive_button.setChecked(connected)
+        self.receive_button.setText("停止接收" if connected else "开始接收")
