@@ -28,12 +28,43 @@ neck_monitor/
   ui/
     main_window.py
   bluetooth/
+    manager.py
     client.py
     mock_source.py
   data/
     parser.py
     cache.py
 ```
+
+## 今日完成内容
+
+1. 完成 PySide6 项目基础框架搭建
+   - 创建应用入口 `main.py`
+   - 拆分 UI、蓝牙通信、数据解析、数据缓存等模块
+   - 保留后续接入 STM32 蓝牙串口的扩展位置
+
+2. 完成 JDY-24M 蓝牙数据模拟
+   - 新增 `BluetoothManager`
+   - 当前无真实蓝牙模块时，使用定时器模拟 JDY-24M 数据发送
+   - 数据链路为 `BluetoothManager -> SensorDataParser -> SensorDataCache -> MainWindow`
+
+3. 切换模拟数据格式为 JSON
+   - 当前核心字段包括 `score`、`state`、`pitch`、`roll`、`mode`
+   - UI 可基于 JSON 数据实时刷新健康评分、当前状态、Pitch、Roll、历史记录等内容
+
+4. 完成竞赛展示风格 UI 设计
+   - 首页采用左侧导航栏、顶部状态栏、核心数据卡片、实时姿态区域和右侧信息栏布局
+   - 顶部卡片包含健康评分、当前状态、提醒模式、今日佩戴时长
+   - 健康评分使用半圆仪表盘样式
+   - Pitch / Roll 使用实时曲线组件预留展示趋势
+   - 历史记录页使用更清晰的表格形式显示数据
+   - 设备设置页预留真实蓝牙串口参数和设备信息展示位置
+
+5. 当前设计约束
+   - APP 仅作为 STM32 设备数据展示端
+   - 当前不进行 AI 计算
+   - `AI状态` 和 `置信度` 为预留展示字段
+   - 精细统计数据暂时显示为 `--`，后续扩展 JSON 数据格式后再接入
 
 ## 当前模拟数据格式
 
