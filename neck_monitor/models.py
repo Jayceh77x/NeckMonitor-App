@@ -12,3 +12,5 @@ class NeckSensorSample:
     timestamp: datetime
     yaw: float
     pressure: float
+    confidence: float | None
+    alert: bool

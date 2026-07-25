@@ -4,13 +4,14 @@ from PySide6.QtWidgets import QApplication
 
 from neck_monitor.bluetooth.manager import BluetoothManager
 from neck_monitor.data.cache import SensorDataCache
-from neck_monitor.data.parser import SensorDataParser
+from neck_monitor.data.parser import JsonLineStreamDecoder, SensorDataParser
 from neck_monitor.ui.main_window import MainWindow
 
 
 class NeckMonitorApp:
     def __init__(self) -> None:
         self.parser = SensorDataParser()
+        self.stream_decoder = JsonLineStreamDecoder()
         self.cache = SensorDataCache(max_size=300)
         self.bluetooth = BluetoothManager(interval_ms=800)
         self.window = MainWindow()
@@ -24,10 +25,21 @@ class NeckMonitorApp:
         self.window.show()
         self.bluetooth.start()
 
-    def _handle_raw_data(self, payload: str) -> None:
-        sample = self.parser.parse(payload)
-        self.cache.append(sample)
-        self.window.update_sample(sample, sample_count=len(self.cache))
+    def _handle_raw_data(self, chunk: bytes | str) -> None:
+        try:
+            payloads = self.stream_decoder.feed(chunk)
+        except ValueError as exc:
+            self.window.show_data_error(str(exc))
+            return
+
+        for payload in payloads:
+            try:
+                sample = self.parser.parse(payload)
+            except (TypeError, ValueError) as exc:
+                self.window.show_data_error(str(exc))
+                continue
+            self.cache.append(sample)
+            self.window.update_sample(sample, sample_count=len(self.cache))
 
 
 def run() -> int:

@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 
 class BluetoothManager(QObject):
-    raw_data_received = Signal(str)
+    raw_data_received = Signal(object)
     connection_changed = Signal(bool)
 
     def __init__(self, interval_ms: int = 800) -> None:
@@ -45,15 +45,20 @@ class BluetoothManager(QObject):
 
         state = self._classify_state(pitch, roll)
         score = self._calculate_score(pitch, roll)
+        alert = state != "正常" and self._tick % 8 == 0
         payload = {
+            "version": 1,
+            "seq": self._tick,
             "score": score,
             "state": state,
             "pitch": round(pitch, 2),
             "roll": round(roll, 2),
             "mode": "JDY-24M_SIM",
+            "confidence": round(0.91 + 0.06 * abs(math.cos(phase)), 3),
+            "alert": int(alert),
             "timestamp": datetime.now().isoformat(timespec="seconds"),
         }
-        self.raw_data_received.emit(json.dumps(payload, ensure_ascii=False))
+        self.raw_data_received.emit(json.dumps(payload, ensure_ascii=False) + "\n")
 
     @staticmethod
     def _classify_state(pitch: float, roll: float) -> str:

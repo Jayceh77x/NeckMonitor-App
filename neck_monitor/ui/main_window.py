@@ -117,6 +117,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("智能颈椎监测系统")
         self.resize(1280, 760)
         self._abnormal_count = 0
+        self._was_abnormal = False
+        self._alert_active = False
         self._sample_count = 0
         self._pitch_values: list[float] = []
         self._roll_values: list[float] = []
@@ -131,7 +133,6 @@ class MainWindow(QMainWindow):
 
         self.pitch_value = QLabel("--")
         self.roll_value = QLabel("--")
-        self.ai_status_value = QLabel("未启用")
         self.confidence_value = QLabel("--")
         self.abnormal_count_value = QLabel("0")
         self.last_reminder_value = QLabel("--")
@@ -139,7 +140,6 @@ class MainWindow(QMainWindow):
         self.device_signal_value = QLabel("--")
         self.dashboard_pitch_value = QLabel("--")
         self.dashboard_roll_value = QLabel("--")
-        self.dashboard_ai_status_value = QLabel("未启用")
         self.dashboard_confidence_value = QLabel("--")
         self.dashboard_abnormal_count_value = QLabel("0 次")
         self.stats_abnormal_count_value = QLabel("0 次")
@@ -406,8 +406,13 @@ class MainWindow(QMainWindow):
             0,
             1,
         )
-        layout.addWidget(self._metric_panel("AI 识别结果", self.ai_status_value, "当前阶段不启用 AI 计算"), 1, 0)
-        layout.addWidget(self._metric_panel("置信度", self.confidence_value, "预留字段，等待后续 JSON 扩展"), 1, 1)
+        layout.addWidget(
+            self._metric_panel("识别置信度", self.confidence_value, "由 STM32U575 计算并通过蓝牙发送"),
+            1,
+            0,
+            1,
+            2,
+        )
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         return page
@@ -514,10 +519,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(angles, 1)
 
         bottom = QGridLayout()
-        bottom.addWidget(self._compact_data("AI 识别结果", self.dashboard_ai_status_value), 0, 0)
-        bottom.addWidget(self._compact_data("置信度", self.dashboard_confidence_value), 0, 1)
-        bottom.addWidget(self._compact_data("异常计数", self.dashboard_abnormal_count_value), 0, 2)
-        bottom.addWidget(self._compact_data("最后提醒", self.last_reminder_value), 0, 3)
+        bottom.addWidget(self._compact_data("识别置信度", self.dashboard_confidence_value), 0, 0)
+        bottom.addWidget(self._compact_data("异常计数", self.dashboard_abnormal_count_value), 0, 1)
+        bottom.addWidget(self._compact_data("最后提醒", self.last_reminder_value), 0, 2)
         layout.addLayout(bottom)
         return card
 
@@ -672,9 +676,12 @@ class MainWindow(QMainWindow):
 
     def update_sample(self, sample: NeckSensorSample, sample_count: int) -> None:
         abnormal = sample.state != "正常"
-        if abnormal:
+        if abnormal and not self._was_abnormal:
             self._abnormal_count += 1
+        if sample.alert and not self._alert_active:
             self.last_reminder_value.setText(sample.timestamp.strftime("%H:%M:%S"))
+        self._was_abnormal = abnormal
+        self._alert_active = sample.alert
 
         self._sample_count = sample_count
         self._pitch_values.append(sample.pitch)
@@ -696,10 +703,11 @@ class MainWindow(QMainWindow):
         self.roll_value.setText(f"{sample.roll:.1f}°")
         self.dashboard_pitch_value.setText(f"{sample.pitch:.1f}°")
         self.dashboard_roll_value.setText(f"{sample.roll:.1f}°")
-        self.ai_status_value.setText("未启用")
-        self.confidence_value.setText("--")
-        self.dashboard_ai_status_value.setText("未启用")
-        self.dashboard_confidence_value.setText("--")
+        confidence_text = (
+            "--" if sample.confidence is None else f"{sample.confidence * 100:.1f}%"
+        )
+        self.confidence_value.setText(confidence_text)
+        self.dashboard_confidence_value.setText(confidence_text)
         self.avg_score_value.setText(f"{sample.score} 分")
         self.history_avg_score_value.setText(f"{sample.score} 分")
         self.history_total_value.setText(f"{sample_count} 条")
@@ -737,9 +745,17 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _display_mode(mode: str) -> str:
+        mode_names = {
+            "0": "普通模式",
+            "NORMAL": "普通模式",
+            "1": "静音模式",
+            "SILENT": "静音模式",
+            "2": "强提醒模式",
+            "STRONG": "强提醒模式",
+        }
         if "SIM" in mode.upper():
             return "普通模式"
-        return mode.replace("_", " ")
+        return mode_names.get(mode.upper(), mode.replace("_", " "))
 
     def _toggle_receiving(self) -> None:
         if self.receive_button.isChecked():
@@ -755,8 +771,13 @@ class MainWindow(QMainWindow):
     def update_bluetooth_status(self, connected: bool) -> None:
         status = "JDY-24M 接收中" if connected else "已停止"
         self.bluetooth_status_value.setText(status)
+        self.bluetooth_status_value.setToolTip("")
         self.receive_button.setChecked(connected)
         self.receive_button.setText("停止接收" if connected else "开始接收")
+
+    def show_data_error(self, message: str) -> None:
+        self.bluetooth_status_value.setText("数据格式错误")
+        self.bluetooth_status_value.setToolTip(message)
 
     def _update_clock(self) -> None:
         self.time_value.setText(f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

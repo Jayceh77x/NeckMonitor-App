@@ -2,7 +2,7 @@ from PySide6.QtCore import QObject, Signal
 
 
 class BluetoothSerialClient(QObject):
-    raw_data_received = Signal(str)
+    raw_data_received = Signal(object)
     connection_changed = Signal(bool)
     error_occurred = Signal(str)
 
@@ -28,4 +28,3 @@ class BluetoothSerialClient(QObject):
             return
         self._connected = connected
         self.connection_changed.emit(connected)
-

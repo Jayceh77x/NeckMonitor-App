@@ -2,6 +2,8 @@
 
 基于 Python + PySide6 的智能颈椎监测数据展示端。
 
+蓝牙与 STM32 联调请直接参考：[蓝牙串口通信协议 V1](docs/Bluetooth_Protocol_V1.md)。
+
 当前阶段：
 
 - 仅作为 STM32 设备的数据展示端
@@ -63,7 +65,8 @@ neck_monitor/
 5. 当前设计约束
    - APP 仅作为 STM32 设备数据展示端
    - 当前不进行 AI 计算
-   - `AI状态` 和 `置信度` 为预留展示字段
+   - UI 已删除“AI 状态”，避免让人误解为 APP 在执行 AI
+   - `confidence` 仅展示 STM32U575 返回的板端识别置信度
    - 精细统计数据暂时显示为 `--`，后续扩展 JSON 数据格式后再接入
 
 ## 当前模拟数据格式
@@ -72,12 +75,22 @@ JDY-24M 模拟数据采用 JSON 字符串：
 
 ```json
 {
+  "version": 1,
+  "seq": 1,
   "score": 95,
   "state": "正常",
   "pitch": 3.2,
   "roll": -1.5,
-  "mode": "JDY-24M_SIM"
+  "mode": "JDY-24M_SIM",
+  "confidence": 0.96,
+  "alert": 0
 }
+```
+
+实际串口数据必须在 JSON 后追加换行符 `\n`，即一行代表一帧：
+
+```text
+{"version":1,"seq":1,"score":95,"state":"NORMAL","pitch":3.2,"roll":-1.5,"mode":0,"confidence":0.96,"alert":0}\n
 ```
 
 后续接入真实蓝牙串口时，优先替换或扩展 `neck_monitor.bluetooth.manager.BluetoothManager` 的数据来源，保持其向外发出同样结构的 JSON 字符串即可。
@@ -88,7 +101,8 @@ JDY-24M 模拟数据采用 JSON 字符串：
 
 ```text
 BluetoothManager
-  -> raw_data_received(JSON 字符串)
+  -> raw_data_received(串口字节块或模拟字符串)
+  -> JsonLineStreamDecoder.feed()
   -> SensorDataParser.parse()
   -> NeckSensorSample
   -> SensorDataCache
@@ -110,57 +124,104 @@ mode: str           # 设备模式，例如：JDY-24M_SIM、普通模式
 timestamp: datetime # 接收或采样时间
 yaw: float          # 预留字段，当前默认为 0.0
 pressure: float     # 预留字段，当前默认为 0.0
+confidence: float | None # STM32 板端识别置信度，范围 0.0-1.0
+alert: bool         # STM32 提醒事件，0/1 或 false/true
 ```
 
-### 建议扩展 JSON 数据格式
+### 字段归属
 
-下一阶段建议将 STM32/JDY-24M 发送的数据扩展为：
+APP 不执行姿态识别、AI 推理、健康评分或提醒决策。以下字段必须由 STM32U575 计算后经蓝牙发送：
+
+- `score`：健康评分，0-100。
+- `state`：姿态识别结果。
+- `pitch`、`roll`：姿态角，单位为度。
+- `yaw`：偏航角；UI 需要时发送。
+- `pressure`：压力传感器数据；UI 需要时发送。
+- `mode`：STM32 当前提醒模式。
+- `alert`：STM32 已触发提醒的事件标记。
+- `confidence`：STM32/NanoEdge AI 输出的置信度，范围 0.0-1.0。
+- `wear_minutes`：今日佩戴时长，单位为分钟。
+- `target_minutes`：今日佩戴目标，单位为分钟。
+- `battery`：设备电量百分比。
+
+以下字段不属于 STM32 核心算法结果：
+
+- `abnormal_count`：APP 根据 `state` 从正常切换到异常的次数统计。
+- `longest_bad_posture_seconds`：APP 根据异常状态开始、结束时间统计。
+- `reminder_count`：APP 根据 `alert` 从 0 变为 1 的次数统计。
+- `last_reminder_time`：APP 在收到提醒事件时记录的本机时间。
+- `device_name`：设备元数据，可在连接后发送一次或在 APP 中配置。
+- `firmware`：固件元数据，建议连接后由 STM32 发送一次。
+- `rssi`：蓝牙接收信号强度，应由电脑蓝牙栈或 JDY-24M 查询接口提供；普通串口数据本身通常无法得到 RSSI。
+
+注意：如果要求 APP 断开或关闭后仍能得到完整的“今日统计”，应将前四个统计值保存在 APP 的 SQLite 中；如果设备端需要作为唯一可信来源，也可以由 STM32 保存并定期发送统计快照。
+
+### 蓝牙传输数据名单
+
+推荐将高频数据控制在一帧 JSON 中。STM32 每 500-1000 ms 发送一次：
+
+| 字段 | 必需 | 类型 | 来源/用途 |
+| --- | --- | --- | --- |
+| `version` | 是 | int | 协议版本，当前固定为 `1` |
+| `seq` | 是 | uint32 | 帧序号，用于发现丢帧和重复帧 |
+| `score` | 是 | int | STM32 计算的健康评分，0-100 |
+| `state` | 是 | string | STM32 姿态结果枚举 |
+| `pitch` | 是 | float | 俯仰角，单位 deg |
+| `roll` | 是 | float | 横滚角，单位 deg |
+| `mode` | 是 | int | 提醒模式：0 普通、1 静音、2 强提醒 |
+| `alert` | 是 | int | 提醒事件：0 未触发、1 触发 |
+| `confidence` | 建议 | float/null | 板端识别置信度，0.0-1.0 |
+| `wear_minutes` | 建议 | int | 今日佩戴分钟数 |
+| `target_minutes` | 可选 | int | 今日目标分钟数 |
+| `battery` | 建议 | int | 电量百分比，0-100 |
+| `yaw` | 可选 | float | 偏航角，单位 deg |
+| `pressure` | 可选 | float | 压力值，单位需与固件统一 |
+| `uptime_ms` | 建议 | uint32 | STM32 启动后的毫秒数，用于时序判断 |
+
+连接建立后可发送一次设备元数据，也可以暂时放在同一帧中：`device_name`、`firmware`。`rssi` 不建议由 STM32 遥测帧提供。
+
+### 推荐 JSON 协议 V1
+
+STM32 发送示例：
 
 ```json
 {
+  "version": 1,
+  "seq": 1024,
   "score": 92,
-  "state": "正常",
+  "state": "NORMAL",
   "pitch": 12.5,
   "roll": 3.2,
-  "yaw": 0.0,
-  "pressure": 0.0,
-  "mode": "普通模式",
-  "confidence": null,
-  "ai_status": "未启用",
+  "mode": 0,
+  "alert": 0,
+  "confidence": 0.96,
   "wear_minutes": 388,
   "target_minutes": 480,
-  "abnormal_count": 8,
-  "longest_bad_posture_seconds": 195,
-  "reminder_count": 1,
-  "last_reminder_time": "10:23:15",
   "battery": 85,
-  "rssi": -42,
-  "firmware": "v2.1.3",
-  "device_name": "NeckMonitor-01",
-  "timestamp": "2026-07-24T14:44:29"
+  "uptime_ms": 325680
 }
 ```
 
-字段说明：
+实际发送内容必须是单行紧凑 JSON，并以 `\n` 结尾：
 
-- `score`：健康评分，建议 STM32 端或上位机端统一输出 0-100。
-- `state`：姿态状态文本，建议固定枚举值，避免 UI 侧做复杂判断。
-- `pitch`、`roll`、`yaw`：姿态角度，单位建议统一为度。
-- `pressure`：压力传感器值，当前 UI 未重点展示，后续可加入实时数据页。
-- `mode`：提醒模式，例如普通模式、静音模式、强提醒模式。
-- `confidence`：AI 置信度预留字段；当前不进行 AI 计算，可传 `null`。
-- `ai_status`：AI 状态预留字段；当前建议固定为 `未启用`。
-- `wear_minutes`：今日佩戴时长，单位分钟。
-- `target_minutes`：今日目标佩戴时长，单位分钟。
-- `abnormal_count`：今日异常次数。
-- `longest_bad_posture_seconds`：最长异常姿态持续时间。
-- `reminder_count`：今日提醒次数。
-- `last_reminder_time`：最近一次提醒时间。
-- `battery`：设备电量百分比。
-- `rssi`：蓝牙信号强度，单位 dBm。
-- `firmware`：固件版本。
-- `device_name`：设备名称。
-- `timestamp`：采样时间，推荐 ISO 8601 格式。
+```text
+{"version":1,"seq":1024,"score":92,"state":"NORMAL","pitch":12.5,"roll":3.2,"mode":0,"alert":0,"confidence":0.96,"wear_minutes":388,"target_minutes":480,"battery":85,"uptime_ms":325680}\n
+```
+
+`state` 固定枚举：`NORMAL`、`HEAD_DOWN`、`HEAD_UP`、`TILT_LEFT`、`TILT_RIGHT`。APP 解析后自动转换成中文显示。
+
+### APP 解码方案
+
+串口和蓝牙可能出现半包或粘包，不能假设一次读取就是一帧。当前 APP 已加入 `JsonLineStreamDecoder`，处理步骤为：
+
+1. JDY-24M 将 STM32 UART 字节透明传输到电脑串口。
+2. APP 把每次读到的字节追加到接收缓冲区。
+3. APP 按换行符 `\n` 切分完整帧；没有换行的半帧继续等待。
+4. 一次收到多行时逐帧处理，解决粘包。
+5. 每帧按 UTF-8 解码，再交给 `json.loads()`。
+6. `SensorDataParser` 校验必需字段并转换类型，最后更新缓存和 UI。
+
+因此 STM32 端只需要保证：UTF-8/ASCII JSON、每帧单行、末尾固定发送 `\n`、字段名和单位遵守协议。JSON 中不要加入注释、尾逗号或 `NaN`。
 
 ### UI 字段接入计划
 
@@ -171,18 +232,17 @@ pressure: float     # 预留字段，当前默认为 0.0
 - 首页提醒模式：`mode`
 - 实时数据 Pitch：`pitch`
 - 实时数据 Roll：`roll`
+- 识别置信度：`confidence`
+- 异常事件计数：根据 `state` 状态切换统计
+- 最后提醒时间：根据 `alert` 提醒事件记录
 - 历史记录：`timestamp`、`score`、`pitch`、`roll`、`state`、`mode`
 
 待接入字段：
 
 - 今日佩戴时长：`wear_minutes`
 - 目标佩戴时长：`target_minutes`
-- AI 状态：`ai_status`
-- 置信度：`confidence`
-- 今日异常次数：`abnormal_count`
 - 最长异常姿态持续时间：`longest_bad_posture_seconds`
 - 久坐或姿态提醒次数：`reminder_count`
-- 最后提醒时间：`last_reminder_time`
 - 设备名称：`device_name`
 - 固件版本：`firmware`
 - 蓝牙信号：`rssi`
@@ -279,13 +339,4 @@ python -m compileall main.py neck_monitor
 
 ### Git 说明
 
-当前开发习惯：
-
-- 设计和开发前先检查 `git status`
-- 每个阶段完成后做本地提交
-- 不再每次自动上传 GitHub
-- 如需上传，手动执行：
-
-```powershell
-git push -u origin main
-```
+后续由项目所有者自行完成 Git 检查、提交和上传。Codex 不自动执行 Git 操作。
