@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
-    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -20,92 +19,14 @@ from PySide6.QtWidgets import (
 )
 
 from neck_monitor.models import NeckSensorSample
-
-
-class LineChart(QWidget):
-    def __init__(self, color: str, label: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._color = QColor(color)
-        self._label = label
-        self._values: list[float] = []
-        self.setMinimumHeight(150)
-
-    def set_values(self, values: list[float]) -> None:
-        self._values = values[-40:]
-        self.update()
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        rect = self.rect().adjusted(14, 12, -14, -18)
-        painter.fillRect(self.rect(), QColor("#ffffff"))
-
-        grid_pen = QPen(QColor("#e5eaf2"))
-        grid_pen.setStyle(Qt.DashLine)
-        painter.setPen(grid_pen)
-        for ratio in (0.25, 0.5, 0.75):
-            y = rect.top() + rect.height() * ratio
-            painter.drawLine(rect.left(), int(y), rect.right(), int(y))
-
-        painter.setPen(QPen(QColor("#94a3b8")))
-        painter.drawText(rect.left(), rect.top() + 12, "30")
-        painter.drawText(rect.left(), rect.center().y() + 4, "0")
-        painter.drawText(rect.left(), rect.bottom(), "-30")
-
-        if len(self._values) < 2:
-            painter.setPen(QPen(QColor("#94a3b8")))
-            painter.drawText(rect, Qt.AlignCenter, f"{self._label} 数据等待中")
-            return
-
-        points: list[QPointF] = []
-        step = rect.width() / max(1, len(self._values) - 1)
-        for index, value in enumerate(self._values):
-            clamped = max(-30.0, min(30.0, value))
-            x = rect.left() + step * index
-            y = rect.center().y() - (clamped / 60.0) * rect.height()
-            points.append(QPointF(x, y))
-
-        painter.setPen(QPen(self._color, 3))
-        for index in range(1, len(points)):
-            painter.drawLine(points[index - 1], points[index])
-
-
-class ScoreGauge(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._score = 0
-        self.setMinimumSize(124, 96)
-
-    def set_score(self, score: int) -> None:
-        self._score = max(0, min(100, score))
-        self.update()
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(16, 8, -16, 6)
-        gauge_rect = rect.adjusted(4, 6, -4, -10)
-
-        bg_pen = QPen(QColor("#e7edf5"), 10)
-        bg_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(bg_pen)
-        painter.drawArc(gauge_rect, 210 * 16, -240 * 16)
-
-        color = QColor("#41be69") if self._score >= 80 else QColor("#2f80ed")
-        if self._score < 60:
-            color = QColor("#f59e0b")
-        value_pen = QPen(color, 10)
-        value_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(value_pen)
-        painter.drawArc(gauge_rect, 210 * 16, int(-240 * 16 * (self._score / 100)))
-
-        painter.setPen(color)
-        font = painter.font()
-        font.setPointSize(25)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.drawText(rect, Qt.AlignCenter, str(self._score))
+from neck_monitor.ui.widgets import (
+    AppButton,
+    CardFrame,
+    LineChart,
+    PostureGauge,
+    PostureImage,
+    ScoreGauge,
+)
 
 
 class MainWindow(QMainWindow):
@@ -130,6 +51,8 @@ class MainWindow(QMainWindow):
         self.bluetooth_status_value = QLabel("JDY-24M 模拟")
         self.time_value = QLabel("--")
         self.score_gauge = ScoreGauge()
+        self.posture_image = PostureImage()
+        self.posture_gauge = PostureGauge()
 
         self.pitch_value = QLabel("--")
         self.roll_value = QLabel("--")
@@ -147,7 +70,7 @@ class MainWindow(QMainWindow):
         self.history_abnormal_value = QLabel("0 次")
         self.history_avg_score_value = QLabel("--")
 
-        self.receive_button = QPushButton("停止接收")
+        self.receive_button = AppButton("停止接收", role="primary")
         self.receive_button.setCheckable(True)
         self.receive_button.setChecked(True)
         self.history_table = QTableWidget(0, 7)
@@ -166,37 +89,54 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self.setStyleSheet(
             """
-            QMainWindow { background: #edf3fa; }
+            QMainWindow { background: #f1f5fa; }
             * { font-family: "Microsoft YaHei", "Segoe UI"; }
             QLabel { color: #172033; font-size: 14px; border: none; }
             QPushButton {
-                min-height: 38px;
-                padding: 0 18px;
-                border: 1px solid #c9d7ea;
-                border-radius: 8px;
+                min-height: 40px;
+                padding: 0 20px;
+                border: 1px solid #d3deec;
+                border-radius: 10px;
                 background: #ffffff;
                 color: #172033;
                 font-weight: 700;
             }
-            QPushButton:hover { background: #edf6ff; border-color: #60a5fa; }
-            QPushButton:checked { background: #1463ff; border-color: #1463ff; color: #ffffff; }
+            QPushButton:hover { background: #f3f7ff; border-color: #7aa9fa; }
+            QPushButton:pressed { background: #e7effc; }
+            QPushButton#primaryButton:checked {
+                background: #1769e8;
+                border-color: #1769e8;
+                color: #ffffff;
+            }
+            QPushButton#primaryButton:checked:hover { background: #0f5fd8; }
             QPushButton#navButton {
                 min-height: 52px;
                 text-align: left;
                 padding-left: 22px;
                 border: none;
-                border-radius: 8px;
+                border-radius: 10px;
                 background: transparent;
-                color: #dbeafe;
-                font-size: 17px;
+                color: #c8d5e5;
+                font-size: 16px;
             }
+            QPushButton#navButton:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
             QPushButton#navButton:checked {
-                background: #1463ff;
+                background: #1769e8;
                 color: #ffffff;
+            }
+            QFrame#appCard {
+                background: #ffffff;
+                border: 1px solid #dce4ee;
+                border-radius: 14px;
+            }
+            QFrame#mutedCard {
+                background: #f7faff;
+                border: 1px solid #e8eef6;
+                border-radius: 11px;
             }
             QTableWidget {
                 border: 1px solid #d6e0ec;
-                border-radius: 8px;
+                border-radius: 12px;
                 background: #ffffff;
                 alternate-background-color: #f8fbff;
                 gridline-color: #e6edf5;
@@ -210,9 +150,6 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid #d6e0ec;
                 padding: 10px;
                 font-weight: 700;
-            }
-            QProgressBar {
-                border: none;
             }
             """
         )
@@ -254,9 +191,7 @@ class MainWindow(QMainWindow):
         ]
         self.nav_buttons: list[QPushButton] = []
         for text, page_index in nav_items:
-            button = QPushButton(text)
-            button.setObjectName("navButton")
-            button.setCheckable(True)
+            button = AppButton(text, role="navigation")
             button.clicked.connect(lambda checked=False, idx=page_index: self._switch_page(idx))
             layout.addWidget(button)
             self.nav_buttons.append(button)
@@ -359,7 +294,7 @@ class MainWindow(QMainWindow):
                 self.posture_value,
                 "持续时间 --",
                 "#41be69",
-                "text",
+                "posture",
             )
         )
         top_cards.addWidget(
@@ -464,18 +399,19 @@ class MainWindow(QMainWindow):
         display: str,
     ) -> QWidget:
         card = self._card()
-        card.setMinimumHeight(158)
-        card.setMaximumHeight(172)
+        card.setMinimumHeight(176)
+        card.setMaximumHeight(190)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(4)
         title_label = QLabel(title)
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setStyleSheet("font-size: 18px; font-weight: 900; color: #0d1728;")
         value_widget.setAlignment(Qt.AlignCenter)
         value_widget.setWordWrap(True)
+        value_color = "#758195" if display == "posture" else color
         value_widget.setStyleSheet(
-            f"font-size: 30px; font-weight: 900; color: {color}; line-height: 1.05;"
+            f"font-size: 26px; font-weight: 900; color: {value_color}; line-height: 1.05;"
         )
         hint_label = QLabel(hint)
         hint_label.setAlignment(Qt.AlignCenter)
@@ -484,6 +420,9 @@ class MainWindow(QMainWindow):
         if display == "gauge":
             layout.addWidget(self.score_gauge, 1, Qt.AlignCenter)
             value_widget.hide()
+        elif display == "posture":
+            layout.addWidget(self.posture_image, 0)
+            layout.addWidget(value_widget, 0)
         else:
             layout.addStretch(1)
             layout.addWidget(value_widget)
@@ -530,7 +469,15 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        layout.addWidget(self._metric_panel("姿态状态指示", QLabel("正常 / 低头 / 左倾 / 右倾"), "图形化状态指示预留"))
+        posture_card = self._card()
+        posture_layout = QVBoxLayout(posture_card)
+        posture_layout.setContentsMargins(16, 10, 16, 10)
+        posture_layout.setSpacing(2)
+        posture_title = QLabel("姿态状态指示")
+        posture_title.setStyleSheet("font-size: 16px; font-weight: 900;")
+        posture_layout.addWidget(posture_title)
+        posture_layout.addWidget(self.posture_gauge, 1)
+        layout.addWidget(posture_card)
         layout.addWidget(self._stats_panel())
         layout.addWidget(self._device_panel())
         return wrapper
@@ -556,9 +503,10 @@ class MainWindow(QMainWindow):
     def _stats_panel(self) -> QWidget:
         card = self._card()
         layout = QGridLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setVerticalSpacing(3)
         title = QLabel("今日数据统计")
-        title.setStyleSheet("font-size: 18px; font-weight: 900;")
+        title.setStyleSheet("font-size: 16px; font-weight: 900;")
         layout.addWidget(title, 0, 0, 1, 2)
         rows = [
             ("异常次数", self.stats_abnormal_count_value),
@@ -569,7 +517,7 @@ class MainWindow(QMainWindow):
         for row, (name, value) in enumerate(rows, start=1):
             name_label = QLabel(name)
             value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            value.setStyleSheet("font-size: 16px; font-weight: 800;")
+            value.setStyleSheet("font-size: 14px; font-weight: 800;")
             layout.addWidget(name_label, row, 0)
             layout.addWidget(value, row, 1)
         return card
@@ -577,9 +525,10 @@ class MainWindow(QMainWindow):
     def _device_panel(self) -> QWidget:
         card = self._card()
         layout = QGridLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setVerticalSpacing(3)
         title = QLabel("设备信息")
-        title.setStyleSheet("font-size: 18px; font-weight: 900;")
+        title.setStyleSheet("font-size: 16px; font-weight: 900;")
         layout.addWidget(title, 0, 0, 1, 2)
         rows = [
             ("设备名称", "NeckMonitor-01"),
@@ -614,10 +563,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _compact_data(self, title: str, value_widget: QLabel) -> QWidget:
-        card = QFrame()
-        card.setStyleSheet(
-            "QFrame { background: #f8fbff; border: 1px solid #edf2f7; border-radius: 8px; }"
-        )
+        card = CardFrame(muted=True)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 12, 14, 12)
         title_label = QLabel(title)
@@ -655,19 +601,7 @@ class MainWindow(QMainWindow):
         return footer
 
     def _card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        card.setStyleSheet(
-            """
-            QFrame#card {
-                background: #ffffff;
-                border: 1px solid #d6e0ec;
-                border-radius: 10px;
-            }
-            """
-        )
-        return card
+        return CardFrame()
 
     def _switch_page(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
@@ -691,7 +625,14 @@ class MainWindow(QMainWindow):
 
         self.health_score_value.setText(str(sample.score))
         self.score_gauge.set_score(sample.score)
-        self.posture_value.setText(sample.state)
+        self.posture_value.setText(self._display_posture(sample.state))
+        is_normal_posture = sample.state == "正常" or sample.state.upper() == "NORMAL"
+        posture_color = "#31b968" if is_normal_posture else "#f59e0b"
+        self.posture_value.setStyleSheet(
+            f"font-size: 26px; font-weight: 900; color: {posture_color}; line-height: 1.05;"
+        )
+        self.posture_image.set_state(sample.state)
+        self.posture_gauge.set_state(sample.state)
         self.mode_value.setText(self._display_mode(sample.mode))
         self.wear_time_value.setText("--")
         self.abnormal_count_value.setText(f"{self._abnormal_count} 次")
@@ -742,6 +683,12 @@ class MainWindow(QMainWindow):
 
         while self.history_table.rowCount() > 120:
             self.history_table.removeRow(self.history_table.rowCount() - 1)
+
+    @staticmethod
+    def _display_posture(state: str) -> str:
+        if state == "正常" or state.upper() == "NORMAL":
+            return "良好坐姿"
+        return state
 
     @staticmethod
     def _display_mode(mode: str) -> str:

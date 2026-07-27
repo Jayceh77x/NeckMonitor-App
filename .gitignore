@@ -8,4 +8,4 @@ dist/
 build/
 *.egg-info/
 .pytest_cache/
-
+ui_preview*.png
