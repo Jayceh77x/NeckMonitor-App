@@ -1,2 +1,1 @@
 """Bluetooth communication layer."""
-

@@ -13,11 +13,13 @@ class NeckMonitorApp:
         self.parser = SensorDataParser()
         self.stream_decoder = JsonLineStreamDecoder()
         self.cache = SensorDataCache(max_size=300)
-        self.bluetooth = BluetoothManager(interval_ms=800)
+        self.bluetooth = BluetoothManager(port_name="COM8", baud_rate=115200)
         self.window = MainWindow()
 
         self.bluetooth.raw_data_received.connect(self._handle_raw_data)
         self.bluetooth.connection_changed.connect(self.window.update_bluetooth_status)
+        self.bluetooth.connection_changed.connect(self._handle_connection_changed)
+        self.bluetooth.error_occurred.connect(self.window.show_connection_error)
         self.window.start_requested.connect(self.bluetooth.start)
         self.window.stop_requested.connect(self.bluetooth.stop)
 
@@ -40,6 +42,10 @@ class NeckMonitorApp:
                 continue
             self.cache.append(sample)
             self.window.update_sample(sample, sample_count=len(self.cache))
+
+    def _handle_connection_changed(self, connected: bool) -> None:
+        if connected:
+            self.stream_decoder.reset()
 
 
 def run() -> int:

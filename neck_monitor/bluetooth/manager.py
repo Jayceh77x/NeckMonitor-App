@@ -4,24 +4,44 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from neck_monitor.bluetooth.client import BluetoothSerialClient
+
 
 class BluetoothManager(QObject):
     raw_data_received = Signal(object)
     connection_changed = Signal(bool)
+    error_occurred = Signal(str)
 
-    def __init__(self, interval_ms: int = 800) -> None:
+    def __init__(
+        self,
+        port_name: str = "COM8",
+        baud_rate: int = 115200,
+        interval_ms: int = 800,
+        simulation: bool = False,
+    ) -> None:
         super().__init__()
+        self._port_name = port_name
+        self._baud_rate = baud_rate
+        self._simulation = simulation
         self._tick = 0
         self._connected = False
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._emit_jdy24m_sample)
+        self._serial_client = BluetoothSerialClient(self)
+        self._serial_client.raw_data_received.connect(self._forward_raw_data)
+        self._serial_client.connection_changed.connect(self._set_connected)
+        self._serial_client.error_occurred.connect(self._handle_serial_error)
 
     @property
     def is_connected(self) -> bool:
         return self._connected
 
     def start(self) -> None:
+        if not self._simulation:
+            self._serial_client.connect_device(self._port_name, self._baud_rate)
+            return
+
         self._set_connected(True)
         if not self._timer.isActive():
             self._timer.start()
@@ -29,13 +49,21 @@ class BluetoothManager(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
-        self._set_connected(False)
+        self._serial_client.disconnect_device()
+        if self._simulation:
+            self._set_connected(False)
 
     def _set_connected(self, connected: bool) -> None:
         if self._connected == connected:
             return
         self._connected = connected
         self.connection_changed.emit(connected)
+
+    def _handle_serial_error(self, message: str) -> None:
+        self.error_occurred.emit(f"{self._port_name}: {message}")
+
+    def _forward_raw_data(self, chunk: object) -> None:
+        self.raw_data_received.emit(chunk)
 
     def _emit_jdy24m_sample(self) -> None:
         self._tick += 1

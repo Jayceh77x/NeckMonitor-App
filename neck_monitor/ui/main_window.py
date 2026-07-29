@@ -726,5 +726,11 @@ class MainWindow(QMainWindow):
         self.bluetooth_status_value.setText("数据格式错误")
         self.bluetooth_status_value.setToolTip(message)
 
+    def show_connection_error(self, message: str) -> None:
+        self.bluetooth_status_value.setText("串口连接错误")
+        self.bluetooth_status_value.setToolTip(message)
+        self.receive_button.setChecked(False)
+        self.receive_button.setText("开始接收")
+
     def _update_clock(self) -> None:
         self.time_value.setText(f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

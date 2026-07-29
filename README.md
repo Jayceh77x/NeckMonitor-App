@@ -8,8 +8,8 @@
 
 - 仅作为 STM32 设备的数据展示端
 - 暂不进行 AI 计算
-- 蓝牙串口模块预留接口，后续接入真实设备
-- 目前使用 `BluetoothManager` 模拟 JDY-24M 蓝牙模块发送 JSON 数据驱动 UI
+- 默认通过 Windows 蓝牙虚拟串口 `COM8` 读取真实 JDY-24M 数据
+- 保留 `BluetoothManager(simulation=True)` 模拟数据入口，便于无硬件时调试 UI
 
 ## 运行
 
@@ -45,9 +45,9 @@ neck_monitor/
    - 拆分 UI、蓝牙通信、数据解析、数据缓存等模块
    - 保留后续接入 STM32 蓝牙串口的扩展位置
 
-2. 完成 JDY-24M 蓝牙数据模拟
-   - 新增 `BluetoothManager`
-   - 当前无真实蓝牙模块时，使用定时器模拟 JDY-24M 数据发送
+2. 完成 JDY-24M 蓝牙串口接入
+   - `BluetoothManager` 默认打开 `COM8`，串口参数为 115200 8N1
+   - 使用 PySide6 `QSerialPort` 读取真实蓝牙虚拟串口字节流
    - 数据链路为 `BluetoothManager -> SensorDataParser -> SensorDataCache -> MainWindow`
 
 3. 切换模拟数据格式为 JSON
@@ -107,7 +107,7 @@ JDY-24M 模拟数据采用 JSON 字符串：
 {"version":1,"seq":1,"score":95,"state":"NORMAL","pitch":3.2,"roll":-1.5,"mode":0,"confidence":0.96,"alert":0}\n
 ```
 
-后续接入真实蓝牙串口时，优先替换或扩展 `neck_monitor.bluetooth.manager.BluetoothManager` 的数据来源，保持其向外发出同样结构的 JSON 字符串即可。
+真实蓝牙串口已接入 `neck_monitor.bluetooth.manager.BluetoothManager`，默认读取 `COM8`。如需无硬件调试，可手动构造 `BluetoothManager(simulation=True)` 使用模拟数据源。
 
 ## 后续开发说明
 
@@ -123,7 +123,7 @@ BluetoothManager
   -> MainWindow.update_sample()
 ```
 
-当前 `BluetoothManager` 使用 `QTimer` 定时生成模拟数据。后续接入真实 JDY-24M 蓝牙串口后，建议保持对外信号不变，即继续通过 `raw_data_received.emit(payload)` 发送 JSON 字符串，这样 UI、解析和缓存模块不需要大改。
+当前 `BluetoothManager` 默认使用真实 `COM8` 串口读取 JDY-24M 数据。串口层只发出原始字节块，仍由 `JsonLineStreamDecoder` 按 `\n` 分帧，因此支持半包、粘包和 `\r\n`。模拟数据源仍保留在 `simulation=True` 模式中。
 
 ### 当前核心数据结构
 
@@ -265,10 +265,9 @@ STM32 发送示例：
 ### 未完成事项
 
 1. 真实蓝牙串口接入
-   - 当前只模拟 JDY-24M 数据。
-   - 后续需要确认 Windows 下蓝牙串口映射的 COM 口。
-   - 推荐使用 PySide6 的 `QSerialPort` 或 `pyserial` 接入。
-   - 接入后仍建议按行读取 JSON，每行一帧数据。
+   - 已默认接入 Windows 蓝牙虚拟串口 `COM8`。
+   - 如设备管理器中的实际端口不是 `COM8`，需要同步修改 `neck_monitor/app.py` 中的端口配置。
+   - 接入后仍按行读取 JSON，每行一帧数据。
 
 2. 数据协议最终确认
    - 需要和 STM32 固件端统一 JSON 字段名、单位、枚举值。

@@ -34,4 +34,3 @@ class MockDataSource(QObject):
 
         payload = f"{pitch:.2f},{roll:.2f},{yaw:.2f},{pressure:.2f},{timestamp}"
         self.raw_data_received.emit(payload)
-

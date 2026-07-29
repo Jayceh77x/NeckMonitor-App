@@ -87,6 +87,8 @@ class SensorDataParser:
             alert = alert_value
         elif alert_value in (0, 1, "0", "1"):
             alert = bool(int(alert_value))
+        elif isinstance(alert_value, str) and alert_value.lower() in ("false", "true"):
+            alert = alert_value.lower() == "true"
         else:
             raise ValueError("alert 字段必须为 0、1、false 或 true")
         raw_state = str(data["state"])
