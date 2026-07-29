@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -132,7 +133,7 @@ class PostureImage(QWidget):
         if any(
             token in normalized
             for token in ("HEAD_DOWN", "TILT_LEFT", "TILT_RIGHT", "TILT")
-        ) or any(token in state for token in ("低头", "左倾", "右倾", "侧倾")):
+        ) or any(token in state for token in ("低头", "左倾", "右倾", "侧倾", "浣庡ご")):
             return "shared_abnormal"
         return ""
 
@@ -192,7 +193,7 @@ class ScoreGauge(QWidget):
             int(span_angle * (self._score / 100.0)),
         )
 
-        score_font = QFont(painter.font())
+        score_font = QFont("Microsoft YaHei")
         score_font.setPointSize(max(17, int(side * 0.22)))
         score_font.setWeight(QFont.Bold)
         painter.setFont(score_font)
@@ -205,7 +206,7 @@ class ScoreGauge(QWidget):
         )
         painter.drawText(score_rect, Qt.AlignCenter, str(self._score))
 
-        caption_font = QFont(painter.font())
+        caption_font = QFont("Microsoft YaHei")
         caption_font.setPointSize(max(8, int(side * 0.08)))
         caption_font.setWeight(QFont.DemiBold)
         painter.setFont(caption_font)
@@ -224,18 +225,26 @@ class ScoreGauge(QWidget):
 
 
 class LineChart(QWidget):
-    """Compact real-time line chart with grid, thresholds and soft area fill."""
+    """Auto-scaling real-time line chart with timestamped x-axis labels."""
+
+    _MAX_POINTS = 180
 
     def __init__(self, color: str, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._color = QColor(color)
         self._label = label
         self._values: list[float] = []
+        self._timestamps: list[datetime] = []
         self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def set_values(self, values: list[float]) -> None:
-        self._values = list(values[-40:])
+    def set_values(
+        self,
+        values: list[float],
+        timestamps: list[datetime] | None = None,
+    ) -> None:
+        self._values = list(values[-self._MAX_POINTS :])
+        self._timestamps = list((timestamps or [])[-len(self._values) :])
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -243,53 +252,43 @@ class LineChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        plot_rect = QRectF(self.rect()).adjusted(38, 12, -12, -24)
+        plot_rect = QRectF(self.rect()).adjusted(46, 12, -14, -28)
         if plot_rect.width() <= 1 or plot_rect.height() <= 1:
             return
-
-        painter.setPen(QPen(QColor("#e7edf5"), 1, Qt.DashLine))
-        for value in (30, 15, 0, -15, -30):
-            y = self._value_to_y(value, plot_rect)
-            painter.drawLine(QPointF(plot_rect.left(), y), QPointF(plot_rect.right(), y))
-
-        label_font = QFont(painter.font())
-        label_font.setPointSize(8)
-        painter.setFont(label_font)
-        painter.setPen(QColor("#8492a6"))
-        for value in (30, 0, -30):
-            y = self._value_to_y(value, plot_rect)
-            label_rect = QRectF(0, y - 9, 32, 18)
-            painter.drawText(label_rect, Qt.AlignRight | Qt.AlignVCenter, f"{value}°")
-
-        normal_fill = QColor(self._color)
-        normal_fill.setAlpha(12)
-        normal_top = self._value_to_y(15, plot_rect)
-        normal_bottom = self._value_to_y(-15, plot_rect)
-        painter.fillRect(
-            QRectF(
-                plot_rect.left(),
-                normal_top,
-                plot_rect.width(),
-                normal_bottom - normal_top,
-            ),
-            normal_fill,
-        )
 
         if len(self._values) < 2:
             painter.setPen(QColor("#94a3b8"))
             painter.drawText(plot_rect, Qt.AlignCenter, f"{self._label} 数据等待中")
             return
 
+        lower_bound, upper_bound, ticks = self._build_axis(self._values)
+
+        painter.setPen(QPen(QColor("#e7edf5"), 1, Qt.DashLine))
+        for value in ticks:
+            y = self._value_to_y(value, plot_rect, lower_bound, upper_bound)
+            painter.drawLine(QPointF(plot_rect.left(), y), QPointF(plot_rect.right(), y))
+
+        label_font = QFont("Microsoft YaHei")
+        label_font.setPointSize(8)
+        painter.setFont(label_font)
+        painter.setPen(QColor("#8492a6"))
+        for value in ticks:
+            y = self._value_to_y(value, plot_rect, lower_bound, upper_bound)
+            label_rect = QRectF(0, y - 9, 42, 18)
+            painter.drawText(
+                label_rect,
+                Qt.AlignRight | Qt.AlignVCenter,
+                f"{self._format_axis_value(value)}°",
+            )
+
         points: list[QPointF] = []
         step = plot_rect.width() / max(1, len(self._values) - 1)
         for index, value in enumerate(self._values):
             x = plot_rect.left() + step * index
-            y = self._value_to_y(value, plot_rect)
+            y = self._value_to_y(value, plot_rect, lower_bound, upper_bound)
             points.append(QPointF(x, y))
 
-        line_path = QPainterPath(points[0])
-        for point in points[1:]:
-            line_path.lineTo(point)
+        line_path = self._smooth_path(points, plot_rect)
 
         area_path = QPainterPath(line_path)
         area_path.lineTo(points[-1].x(), plot_rect.bottom())
@@ -311,26 +310,103 @@ class LineChart(QWidget):
         painter.setPen(line_pen)
         painter.drawPath(line_path)
 
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(self._color)
-        painter.drawEllipse(points[-1], 3.5, 3.5)
+        self._draw_sample_points(painter, points)
 
-        painter.setPen(QColor("#94a3b8"))
-        painter.drawText(
-            QRectF(plot_rect.left(), plot_rect.bottom() + 5, plot_rect.width(), 16),
-            Qt.AlignLeft | Qt.AlignVCenter,
-            "较早",
-        )
-        painter.drawText(
-            QRectF(plot_rect.left(), plot_rect.bottom() + 5, plot_rect.width(), 16),
-            Qt.AlignRight | Qt.AlignVCenter,
-            "当前",
-        )
+        self._draw_time_labels(painter, plot_rect)
 
     @staticmethod
-    def _value_to_y(value: float, rect: QRectF) -> float:
-        clamped = max(-30.0, min(30.0, float(value)))
-        return rect.center().y() - (clamped / 60.0) * rect.height()
+    def _value_to_y(value: float, rect: QRectF, lower_bound: float, upper_bound: float) -> float:
+        span = max(1e-6, upper_bound - lower_bound)
+        ratio = (float(value) - lower_bound) / span
+        return rect.bottom() - ratio * rect.height()
+
+    @staticmethod
+    def _build_axis(values: list[float]) -> tuple[float, float, list[float]]:
+        axis_limit = max(abs(value) for value in values)
+        axis_limit = max(axis_limit, 1.0)
+        ticks = [
+            -axis_limit,
+            -axis_limit / 2,
+            0.0,
+            axis_limit / 2,
+            axis_limit,
+        ]
+        return -axis_limit, axis_limit, ticks
+
+    @staticmethod
+    def _format_axis_value(value: float) -> str:
+        if abs(value) >= 10 or abs(value - round(value)) < 0.05:
+            return str(int(round(value)))
+        return f"{value:.1f}"
+
+    @staticmethod
+    def _smooth_path(points: list[QPointF], plot_rect: QRectF) -> QPainterPath:
+        if len(points) < 3:
+            path = QPainterPath(points[0])
+            for point in points[1:]:
+                path.lineTo(point)
+            return path
+
+        def clamp_y(value: float) -> float:
+            return max(plot_rect.top(), min(value, plot_rect.bottom()))
+
+        path = QPainterPath(points[0])
+        for index in range(len(points) - 1):
+            p0 = points[index - 1] if index > 0 else points[index]
+            p1 = points[index]
+            p2 = points[index + 1]
+            p3 = points[index + 2] if index + 2 < len(points) else p2
+
+            c1 = QPointF(
+                p1.x() + (p2.x() - p0.x()) / 6.0,
+                clamp_y(p1.y() + (p2.y() - p0.y()) / 6.0),
+            )
+            c2 = QPointF(
+                p2.x() - (p3.x() - p1.x()) / 6.0,
+                clamp_y(p2.y() - (p3.y() - p1.y()) / 6.0),
+            )
+            path.cubicTo(c1, c2, p2)
+        return path
+
+    def _draw_sample_points(self, painter: QPainter, points: list[QPointF]) -> None:
+        if not points:
+            return
+
+        base_brush = QColor(self._color)
+        base_brush.setAlpha(200)
+        edge_pen = QPen(base_brush.darker(115), 0.8)
+        painter.setPen(edge_pen)
+        painter.setBrush(base_brush)
+        for point in points[:-1]:
+            painter.drawEllipse(point, 1.6, 1.6)
+
+        highlight_brush = QColor(self._color)
+        highlight_brush.setAlpha(255)
+        painter.setPen(QPen(highlight_brush.darker(110), 1.0))
+        painter.setBrush(highlight_brush)
+        painter.drawEllipse(points[-1], 2.5, 2.5)
+
+    def _draw_time_labels(self, painter: QPainter, plot_rect: QRectF) -> None:
+        if not self._timestamps:
+            return
+
+        latest_time = self._timestamps[-1].replace(second=0, microsecond=0)
+        slots = [
+            (plot_rect.left(), latest_time - timedelta(minutes=2)),
+            (plot_rect.center().x(), latest_time - timedelta(minutes=1)),
+            (plot_rect.right(), latest_time),
+        ]
+
+        painter.setPen(QColor("#94a3b8"))
+        label_width = 72.0
+        for x, timestamp in slots:
+            label_x = max(plot_rect.left(), min(x - label_width / 2, plot_rect.right() - label_width))
+            label_rect = QRectF(label_x, plot_rect.bottom() + 6, label_width, 18)
+            painter.drawText(
+                label_rect,
+                Qt.AlignCenter,
+                timestamp.strftime("%H:%M"),
+            )
 
 
 class PostureGauge(QWidget):
@@ -382,7 +458,7 @@ class PostureGauge(QWidget):
             start = 200 - index * 44
             painter.drawArc(arc_rect, start * 16, drawn_span * 16)
 
-        label_font = QFont(painter.font())
+        label_font = QFont("Microsoft YaHei")
         label_font.setPointSize(8)
         label_font.setWeight(QFont.DemiBold)
         painter.setFont(label_font)
@@ -432,7 +508,7 @@ class PostureGauge(QWidget):
         state_color = QColor("#31b968") if active_index == 2 else QColor("#f59e0b")
         if active_index < 0:
             state_color = QColor("#758195")
-        state_font = QFont(painter.font())
+        state_font = QFont("Microsoft YaHei")
         state_font.setPointSize(10)
         state_font.setWeight(QFont.Bold)
         painter.setFont(state_font)
@@ -448,12 +524,12 @@ class PostureGauge(QWidget):
         normalized = state.upper()
         if "NORMAL" in normalized or "正常" in state:
             return 2
-        if "HEAD_UP" in normalized or "仰头" in state:
+        if "HEAD_UP" in normalized or "仰头" in state or "后仰" in state:
             return 0
         if "TILT_LEFT" in normalized or "左倾" in state:
             return 1
         if "TILT_RIGHT" in normalized or "右倾" in state or "侧倾" in state:
             return 3
-        if "HEAD_DOWN" in normalized or "低头" in state:
+        if "HEAD_DOWN" in normalized or "低头" in state or "浣庡ご" in state:
             return 4
         return -1

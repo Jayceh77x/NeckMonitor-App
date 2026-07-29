@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
@@ -32,6 +32,7 @@ from neck_monitor.ui.widgets import (
 class MainWindow(QMainWindow):
     start_requested = Signal()
     stop_requested = Signal()
+    source_switch_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -41,18 +42,27 @@ class MainWindow(QMainWindow):
         self._was_abnormal = False
         self._alert_active = False
         self._sample_count = 0
+        self._current_state_key: str | None = None
+        self._current_state_started_at: datetime | None = None
+        self._wear_started_at: datetime | None = None
+        self._wear_accumulated_seconds = 0
+        self._source_mode = "mock"
+        self._chart_limit = 180
         self._pitch_values: list[float] = []
         self._roll_values: list[float] = []
+        self._sample_times: list[datetime] = []
 
         self.health_score_value = QLabel("--")
         self.posture_value = QLabel("等待数据")
         self.mode_value = QLabel("--")
         self.wear_time_value = QLabel("--")
         self.bluetooth_status_value = QLabel("JDY-24M 模拟")
+        self.data_source_value = QLabel("模拟数据")
         self.time_value = QLabel("--")
         self.score_gauge = ScoreGauge()
         self.posture_image = PostureImage()
         self.posture_gauge = PostureGauge()
+        self.current_state_duration_label: QLabel | None = None
 
         self.pitch_value = QLabel("--")
         self.roll_value = QLabel("--")
@@ -73,6 +83,7 @@ class MainWindow(QMainWindow):
         self.receive_button = AppButton("停止接收", role="primary")
         self.receive_button.setCheckable(True)
         self.receive_button.setChecked(True)
+        self.source_toggle_button = AppButton("切换到真实数据", role="primary")
         self.history_table = QTableWidget(0, 7)
         self.pages = QStackedWidget()
         self.pitch_chart = LineChart("#2f80ed", "Pitch")
@@ -283,7 +294,7 @@ class MainWindow(QMainWindow):
             self._summary_card(
                 "健康评分",
                 self.health_score_value,
-                "较昨日 ↑ --",
+                "较昨日 → --",
                 "#41be69",
                 "gauge",
             )
@@ -385,10 +396,33 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         layout.addWidget(self._metric_panel("设备名称", QLabel("NeckMonitor-01"), "真实蓝牙接入后自动读取"), 0, 0)
-        layout.addWidget(self._metric_panel("蓝牙模块", QLabel("JDY-24M"), "当前为模拟数据源"), 0, 1)
+        layout.addWidget(self._metric_panel("蓝牙模块", QLabel("JDY-24M"), "支持真实串口与模拟数据源切换"), 0, 1)
         layout.addWidget(self._metric_panel("串口参数", QLabel("--"), "预留波特率、端口号、校验位"), 1, 0)
         layout.addWidget(self._metric_panel("数据格式", QLabel("JSON"), "score/state/pitch/roll/mode"), 1, 1)
+        layout.addWidget(self._build_source_panel(), 2, 0, 1, 2)
         return page
+
+    def _build_source_panel(self) -> QWidget:
+        card = self._card()
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(16)
+
+        text_area = QVBoxLayout()
+        title = QLabel("数据源")
+        title.setStyleSheet("font-size: 18px; font-weight: 900;")
+        self.data_source_value.setStyleSheet("font-size: 24px; font-weight: 900; color: #1463ff;")
+        hint = QLabel("模拟数据用于界面开发；真实数据使用 COM8 / 115200 读取 JDY-24M")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #667085;")
+        text_area.addWidget(title)
+        text_area.addWidget(self.data_source_value)
+        text_area.addWidget(hint)
+
+        self.source_toggle_button.clicked.connect(self._toggle_data_source)
+        layout.addLayout(text_area, 1)
+        layout.addWidget(self.source_toggle_button)
+        return card
 
     def _summary_card(
         self,
@@ -416,6 +450,8 @@ class MainWindow(QMainWindow):
         hint_label = QLabel(hint)
         hint_label.setAlignment(Qt.AlignCenter)
         hint_label.setStyleSheet("color: #667085; font-size: 14px; font-weight: 700;")
+        if display == "posture":
+            self.current_state_duration_label = hint_label
         layout.addWidget(title_label)
         if display == "gauge":
             layout.addWidget(self.score_gauge, 1, Qt.AlignCenter)
@@ -609,6 +645,12 @@ class MainWindow(QMainWindow):
             button.setChecked(button_index == index)
 
     def update_sample(self, sample: NeckSensorSample, sample_count: int) -> None:
+        state_key = self._state_key(sample.state)
+        if state_key != self._current_state_key:
+            self._current_state_key = state_key
+            self._current_state_started_at = datetime.now()
+        self._update_current_state_duration()
+
         abnormal = sample.state != "正常"
         if abnormal and not self._was_abnormal:
             self._abnormal_count += 1
@@ -620,8 +662,10 @@ class MainWindow(QMainWindow):
         self._sample_count = sample_count
         self._pitch_values.append(sample.pitch)
         self._roll_values.append(sample.roll)
-        self._pitch_values = self._pitch_values[-40:]
-        self._roll_values = self._roll_values[-40:]
+        self._sample_times.append(sample.timestamp)
+        self._pitch_values = self._pitch_values[-self._chart_limit :]
+        self._roll_values = self._roll_values[-self._chart_limit :]
+        self._sample_times = self._sample_times[-self._chart_limit :]
 
         self.health_score_value.setText(str(sample.score))
         self.score_gauge.set_score(sample.score)
@@ -634,12 +678,11 @@ class MainWindow(QMainWindow):
         self.posture_image.set_state(sample.state)
         self.posture_gauge.set_state(sample.state)
         self.mode_value.setText(self._display_mode(sample.mode))
-        self.wear_time_value.setText("--")
         self.abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.dashboard_abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.stats_abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.history_abnormal_value.setText(f"{self._abnormal_count} 次")
-        self.bluetooth_status_value.setText("JDY-24M 接收中")
+        self.bluetooth_status_value.setText(self._connected_status_text())
         self.pitch_value.setText(f"{sample.pitch:.1f}°")
         self.roll_value.setText(f"{sample.roll:.1f}°")
         self.dashboard_pitch_value.setText(f"{sample.pitch:.1f}°")
@@ -654,10 +697,10 @@ class MainWindow(QMainWindow):
         self.history_total_value.setText(f"{sample_count} 条")
         self.device_signal_value.setText("--")
 
-        self.pitch_chart.set_values(self._pitch_values)
-        self.roll_chart.set_values(self._roll_values)
-        self.dashboard_pitch_chart.set_values(self._pitch_values)
-        self.dashboard_roll_chart.set_values(self._roll_values)
+        self.pitch_chart.set_values(self._pitch_values, self._sample_times)
+        self.roll_chart.set_values(self._roll_values, self._sample_times)
+        self.dashboard_pitch_chart.set_values(self._pitch_values, self._sample_times)
+        self.dashboard_roll_chart.set_values(self._roll_values, self._sample_times)
         self._append_history(sample)
 
     def _append_history(self, sample: NeckSensorSample) -> None:
@@ -669,7 +712,7 @@ class MainWindow(QMainWindow):
             f"{sample.roll:.1f}",
             sample.state,
             sample.mode,
-            "JDY-24M",
+            "模拟数据" if self._source_mode == "mock" else "真实蓝牙",
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
@@ -691,6 +734,21 @@ class MainWindow(QMainWindow):
         return state
 
     @staticmethod
+    def _state_key(state: str) -> str:
+        normalized = state.upper()
+        if "NORMAL" in normalized or "正常" in state or "良好" in state:
+            return "NORMAL"
+        if "HEAD_DOWN" in normalized or "低头" in state or "浣庡ご" in state:
+            return "HEAD_DOWN"
+        if "HEAD_UP" in normalized or "仰头" in state or "后仰" in state:
+            return "HEAD_UP"
+        if "TILT_LEFT" in normalized or "左倾" in state:
+            return "TILT_LEFT"
+        if "TILT_RIGHT" in normalized or "右倾" in state or "侧倾" in state:
+            return "TILT_RIGHT"
+        return normalized or state
+
+    @staticmethod
     def _display_mode(mode: str) -> str:
         mode_names = {
             "0": "普通模式",
@@ -707,7 +765,7 @@ class MainWindow(QMainWindow):
     def _toggle_receiving(self) -> None:
         if self.receive_button.isChecked():
             self.receive_button.setText("停止接收")
-            self.bluetooth_status_value.setText("JDY-24M 接收中")
+            self.bluetooth_status_value.setText(self._connected_status_text())
             self.start_requested.emit()
             return
 
@@ -716,11 +774,24 @@ class MainWindow(QMainWindow):
         self.stop_requested.emit()
 
     def update_bluetooth_status(self, connected: bool) -> None:
-        status = "JDY-24M 接收中" if connected else "已停止"
+        status = self._connected_status_text() if connected else "已停止"
         self.bluetooth_status_value.setText(status)
         self.bluetooth_status_value.setToolTip("")
         self.receive_button.setChecked(connected)
         self.receive_button.setText("停止接收" if connected else "开始接收")
+        self._set_wear_tracking(connected)
+        self._update_wear_time_display()
+
+    def update_data_source(self, source_mode: str) -> None:
+        self._source_mode = source_mode
+        if source_mode == "mock":
+            self.data_source_value.setText("模拟数据")
+            self.source_toggle_button.setText("切换到真实数据")
+        else:
+            self.data_source_value.setText("真实蓝牙")
+            self.source_toggle_button.setText("切换到模拟数据")
+        if self.receive_button.isChecked():
+            self.bluetooth_status_value.setText(self._connected_status_text())
 
     def show_data_error(self, message: str) -> None:
         self.bluetooth_status_value.setText("数据格式错误")
@@ -734,3 +805,63 @@ class MainWindow(QMainWindow):
 
     def _update_clock(self) -> None:
         self.time_value.setText(f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._update_wear_time_display()
+        self._update_current_state_duration()
+
+    def _set_wear_tracking(self, connected: bool) -> None:
+        now = datetime.now()
+        if connected:
+            if self._wear_started_at is None:
+                self._wear_started_at = now
+            return
+
+        if self._wear_started_at is not None:
+            self._wear_accumulated_seconds += max(
+                0,
+                int((now - self._wear_started_at).total_seconds()),
+            )
+            self._wear_started_at = None
+
+    def _update_wear_time_display(self) -> None:
+        if self._wear_started_at is None and self._wear_accumulated_seconds == 0:
+            self.wear_time_value.setText("--")
+            return
+
+        elapsed_seconds = self._wear_accumulated_seconds
+        if self._wear_started_at is not None:
+            elapsed_seconds += max(
+                0,
+                int((datetime.now() - self._wear_started_at).total_seconds()),
+            )
+
+        self.wear_time_value.setText(self._format_duration(elapsed_seconds))
+
+    def _update_current_state_duration(self) -> None:
+        if self.current_state_duration_label is None:
+            return
+        if self._current_state_started_at is None:
+            self.current_state_duration_label.setText("持续时间 --")
+            return
+
+        elapsed_seconds = max(
+            0,
+            int((datetime.now() - self._current_state_started_at).total_seconds()),
+        )
+        self.current_state_duration_label.setText(
+            f"持续时间 {self._format_duration(elapsed_seconds)}"
+        )
+
+    @staticmethod
+    def _format_duration(total_seconds: int) -> str:
+        hours, remainder = divmod(max(0, total_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _toggle_data_source(self) -> None:
+        next_source = "serial" if self._source_mode == "mock" else "mock"
+        self.source_switch_requested.emit(next_source)
+
+    def _connected_status_text(self) -> str:
+        return "真实蓝牙接收中" if self._source_mode == "serial" else "模拟数据接收中"
