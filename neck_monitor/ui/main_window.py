@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         self.posture_value = QLabel("等待数据")
         self.mode_value = QLabel("--")
         self.wear_time_value = QLabel("--")
-        self.bluetooth_status_value = QLabel("JDY-24M 模拟")
+        self.bluetooth_status_value = QLabel("JDY-24M BLE")
         self.data_source_value = QLabel("模拟数据")
         self.time_value = QLabel("--")
         self.score_gauge = ScoreGauge()
@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
         self.receive_button = AppButton("停止接收", role="primary")
         self.receive_button.setCheckable(True)
         self.receive_button.setChecked(True)
-        self.source_toggle_button = AppButton("切换到真实数据", role="primary")
+        self.source_toggle_button = AppButton("切换到模拟数据", role="primary")
         self.history_table = QTableWidget(0, 7)
         self.pages = QStackedWidget()
         self.pitch_chart = LineChart("#2f80ed", "Pitch")
@@ -399,8 +399,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         layout.addWidget(self._metric_panel("设备名称", QLabel("NeckMonitor-01"), "真实蓝牙接入后自动读取"), 0, 0)
-        layout.addWidget(self._metric_panel("蓝牙模块", QLabel("JDY-24M"), "支持真实串口与模拟数据源切换"), 0, 1)
-        layout.addWidget(self._metric_panel("串口参数", QLabel("--"), "预留波特率、端口号、校验位"), 1, 0)
+        layout.addWidget(self._metric_panel("蓝牙模块", QLabel("JDY-24M"), "支持 BLE FFE1 与模拟数据源切换"), 0, 1)
+        layout.addWidget(self._metric_panel("BLE 特征", QLabel("FFE1"), "JDY-24M 透传特征 UUID"), 1, 0)
         layout.addWidget(self._metric_panel("数据格式", QLabel("JSON"), "score/state/pitch/roll/mode/vibration_strength"), 1, 1)
         layout.addWidget(self._build_source_panel(), 2, 0, 1, 2)
         return page
@@ -415,7 +415,7 @@ class MainWindow(QMainWindow):
         title = QLabel("数据源")
         title.setStyleSheet("font-size: 18px; font-weight: 900;")
         self.data_source_value.setStyleSheet("font-size: 24px; font-weight: 900; color: #1463ff;")
-        hint = QLabel("模拟数据用于界面开发；真实数据使用 COM8 / 115200 读取 JDY-24M")
+        hint = QLabel("模拟数据用于界面开发；真实数据通过电脑蓝牙订阅 JDY-24M 的 FFE1 特征")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #667085;")
         text_area.addWidget(title)
@@ -634,7 +634,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(footer)
         layout.setContentsMargins(6, 0, 6, 0)
         left = QLabel("数据更新频率：1.0s")
-        right = QLabel("数据来源：STM32 + JDY-24M 模拟设备")
+        right = QLabel("数据来源：STM32 + JDY-24M BLE")
         left.setStyleSheet("color: #667085;")
         right.setStyleSheet("color: #667085;")
         layout.addWidget(left)
@@ -726,7 +726,7 @@ class MainWindow(QMainWindow):
             f"{sample.roll:.1f}",
             sample.state,
             sample.mode,
-            "模拟数据" if self._source_mode == "mock" else "真实蓝牙",
+            self._display_source_name(self._source_mode),
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
@@ -811,9 +811,12 @@ class MainWindow(QMainWindow):
         self._source_mode = source_mode
         if source_mode == "mock":
             self.data_source_value.setText("模拟数据")
-            self.source_toggle_button.setText("切换到真实数据")
-        else:
+            self.source_toggle_button.setText("切换到真实蓝牙")
+        elif source_mode == "ble":
             self.data_source_value.setText("真实蓝牙")
+            self.source_toggle_button.setText("切换到模拟数据")
+        else:
+            self.data_source_value.setText("串口数据")
             self.source_toggle_button.setText("切换到模拟数据")
         if self.receive_button.isChecked():
             self.bluetooth_status_value.setText(self._connected_status_text())
@@ -823,7 +826,7 @@ class MainWindow(QMainWindow):
         self.bluetooth_status_value.setToolTip(message)
 
     def show_connection_error(self, message: str) -> None:
-        self.bluetooth_status_value.setText("串口连接错误")
+        self.bluetooth_status_value.setText("连接错误")
         self.bluetooth_status_value.setToolTip(message)
         self.receive_button.setChecked(False)
         self.receive_button.setText("开始接收")
@@ -904,8 +907,20 @@ class MainWindow(QMainWindow):
         return f"{minutes:02d}:{seconds:02d}"
 
     def _toggle_data_source(self) -> None:
-        next_source = "serial" if self._source_mode == "mock" else "mock"
+        next_source = "ble" if self._source_mode == "mock" else "mock"
         self.source_switch_requested.emit(next_source)
 
     def _connected_status_text(self) -> str:
-        return "真实蓝牙接收中" if self._source_mode == "serial" else "模拟数据接收中"
+        if self._source_mode == "ble":
+            return "真实蓝牙接收中"
+        if self._source_mode == "serial":
+            return "串口接收中"
+        return "模拟数据接收中"
+
+    @staticmethod
+    def _display_source_name(source_mode: str) -> str:
+        if source_mode == "ble":
+            return "真实蓝牙"
+        if source_mode == "serial":
+            return "串口数据"
+        return "模拟数据"

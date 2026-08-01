@@ -1,5 +1,6 @@
 from PySide6.QtCore import QObject, Signal
 
+from neck_monitor.bluetooth.ble_client import BluetoothBleClient, FFE1_UUID
 from neck_monitor.bluetooth.client import BluetoothSerialClient
 from neck_monitor.bluetooth.mock_source import MockDataSource
 
@@ -12,11 +13,15 @@ class BluetoothManager(QObject):
 
     SOURCE_MOCK = "mock"
     SOURCE_SERIAL = "serial"
+    SOURCE_BLE = "ble"
 
     def __init__(
         self,
         port_name: str = "COM8",
         baud_rate: int = 115200,
+        ble_name: str = "JDY-24M",
+        ble_address: str | None = None,
+        ble_char_uuid: str = FFE1_UUID,
         interval_ms: int = 800,
         simulation: bool = False,
         source_mode: str | None = None,
@@ -24,6 +29,8 @@ class BluetoothManager(QObject):
         super().__init__()
         self._port_name = port_name
         self._baud_rate = baud_rate
+        self._ble_name = ble_name
+        self._ble_address = ble_address
         self._source_mode = self._normalize_source_mode(
             source_mode or (self.SOURCE_MOCK if simulation else self.SOURCE_SERIAL)
         )
@@ -37,6 +44,16 @@ class BluetoothManager(QObject):
         self._serial_client.connection_changed.connect(self._set_connected)
         self._serial_client.error_occurred.connect(self._handle_serial_error)
 
+        self._ble_client = BluetoothBleClient(
+            device_name=ble_name,
+            address=ble_address,
+            char_uuid=ble_char_uuid,
+            parent=self,
+        )
+        self._ble_client.raw_data_received.connect(self._forward_raw_data)
+        self._ble_client.connection_changed.connect(self._set_connected)
+        self._ble_client.error_occurred.connect(self._handle_ble_error)
+
     @property
     def is_connected(self) -> bool:
         return self._connected
@@ -46,6 +63,10 @@ class BluetoothManager(QObject):
         return self._source_mode
 
     def start(self) -> None:
+        if self._source_mode == self.SOURCE_BLE:
+            self._ble_client.connect_device()
+            return
+
         if self._source_mode == self.SOURCE_SERIAL:
             self._serial_client.connect_device(self._port_name, self._baud_rate)
             return
@@ -56,6 +77,7 @@ class BluetoothManager(QObject):
     def stop(self) -> None:
         self._mock_source.stop()
         self._serial_client.disconnect_device()
+        self._ble_client.disconnect_device()
         self._set_connected(False)
 
     def switch_source(self, source_mode: str) -> None:
@@ -79,6 +101,10 @@ class BluetoothManager(QObject):
     def _handle_serial_error(self, message: str) -> None:
         self.error_occurred.emit(f"{self._port_name}: {message}")
 
+    def _handle_ble_error(self, message: str) -> None:
+        target = self._ble_address or self._ble_name
+        self.error_occurred.emit(f"{target}: {message}")
+
     def _forward_raw_data(self, chunk: object) -> None:
         self.raw_data_received.emit(chunk)
 
@@ -87,6 +113,8 @@ class BluetoothManager(QObject):
         normalized = source_mode.strip().lower()
         if normalized in {"mock", "simulation", "sim"}:
             return BluetoothManager.SOURCE_MOCK
-        if normalized in {"serial", "bluetooth", "real"}:
+        if normalized in {"ble", "jdy", "ffe1", "real", "bluetooth"}:
+            return BluetoothManager.SOURCE_BLE
+        if normalized in {"serial", "com", "uart"}:
             return BluetoothManager.SOURCE_SERIAL
         raise ValueError(f"Unsupported data source: {source_mode}")
