@@ -59,7 +59,7 @@ class SensorDataParser:
         version = int(data.get("version", 1))
         if version != 1:
             raise ValueError(f"不支持的蓝牙协议版本：{version}")
-        required_fields = {"score", "state", "pitch", "roll", "mode", "vibration_strength"}
+        required_fields = {"score", "state", "pitch", "roll", "mode"}
         missing_fields = required_fields.difference(data)
         if missing_fields:
             missing = ", ".join(sorted(missing_fields))
@@ -74,9 +74,7 @@ class SensorDataParser:
         score = int(data["score"])
         pitch = float(data["pitch"])
         roll = float(data["roll"])
-        vibration_strength = int(data["vibration_strength"])
-        if vibration_strength not in (0, 1, 2):
-            raise ValueError("vibration_strength 瀛楁蹇呴』鍦?0-2 鑼冨洿鍐?")
+        vibration_strength = self._parse_vibration_strength(data)
         confidence_value = data.get("confidence")
         confidence = None if confidence_value is None else float(confidence_value)
         if not 0 <= score <= 100:
@@ -109,3 +107,18 @@ class SensorDataParser:
             confidence=confidence,
             alert=alert,
         )
+
+    @staticmethod
+    def _parse_vibration_strength(data: dict) -> int:
+        if "vibration_strength" in data:
+            vibration_strength = int(data["vibration_strength"])
+            if vibration_strength not in (0, 1, 2):
+                raise ValueError("vibration_strength 字段必须在 0-2 范围内")
+            return vibration_strength
+
+        mode = str(data.get("mode", "")).upper()
+        if mode in {"1", "SILENT"}:
+            return 0
+        if mode in {"2", "STRONG"}:
+            return 2
+        return 1
