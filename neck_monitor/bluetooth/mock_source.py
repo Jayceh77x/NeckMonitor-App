@@ -49,6 +49,7 @@ class MockDataSource(QObject):
             "pitch": round(scenario["pitch"] + math.sin(phase) * 1.1, 2),
             "roll": round(scenario["roll"] + math.cos(phase * 0.8) * 0.9, 2),
             "mode": 0,
+            "vibration_strength": 2 if scenario["state"] != "NORMAL" else 1,
             "alert": int(alert),
             "confidence": round(scenario["confidence"] + random.uniform(-0.01, 0.01), 3),
             "yaw": round(math.sin(phase * 0.5) * 8, 2),

@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self._sample_count = 0
         self._current_state_key: str | None = None
         self._current_state_started_at: datetime | None = None
+        self._longest_head_down_seconds = 0
         self._wear_started_at: datetime | None = None
         self._wear_accumulated_seconds = 0
         self._source_mode = "mock"
@@ -71,6 +72,8 @@ class MainWindow(QMainWindow):
         self.last_reminder_value = QLabel("--")
         self.avg_score_value = QLabel("--")
         self.device_signal_value = QLabel("--")
+        self.longest_head_down_value = QLabel("--")
+        self.vibration_strength_hint_label: QLabel | None = None
         self.dashboard_pitch_value = QLabel("--")
         self.dashboard_roll_value = QLabel("--")
         self.dashboard_confidence_value = QLabel("--")
@@ -294,7 +297,7 @@ class MainWindow(QMainWindow):
             self._summary_card(
                 "健康评分",
                 self.health_score_value,
-                "较昨日 → --",
+                "",
                 "#41be69",
                 "gauge",
             )
@@ -321,7 +324,7 @@ class MainWindow(QMainWindow):
             self._summary_card(
                 "今日佩戴时长",
                 self.wear_time_value,
-                "目标：--",
+                "",
                 "#7c3aed",
                 "text",
             )
@@ -398,7 +401,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._metric_panel("设备名称", QLabel("NeckMonitor-01"), "真实蓝牙接入后自动读取"), 0, 0)
         layout.addWidget(self._metric_panel("蓝牙模块", QLabel("JDY-24M"), "支持真实串口与模拟数据源切换"), 0, 1)
         layout.addWidget(self._metric_panel("串口参数", QLabel("--"), "预留波特率、端口号、校验位"), 1, 0)
-        layout.addWidget(self._metric_panel("数据格式", QLabel("JSON"), "score/state/pitch/roll/mode"), 1, 1)
+        layout.addWidget(self._metric_panel("数据格式", QLabel("JSON"), "score/state/pitch/roll/mode/vibration_strength"), 1, 1)
         layout.addWidget(self._build_source_panel(), 2, 0, 1, 2)
         return page
 
@@ -452,6 +455,8 @@ class MainWindow(QMainWindow):
         hint_label.setStyleSheet("color: #667085; font-size: 14px; font-weight: 700;")
         if display == "posture":
             self.current_state_duration_label = hint_label
+        elif title == "提醒模式":
+            self.vibration_strength_hint_label = hint_label
         layout.addWidget(title_label)
         if display == "gauge":
             layout.addWidget(self.score_gauge, 1, Qt.AlignCenter)
@@ -463,7 +468,8 @@ class MainWindow(QMainWindow):
             layout.addStretch(1)
             layout.addWidget(value_widget)
             layout.addStretch(1)
-        layout.addWidget(hint_label)
+        if hint:
+            layout.addWidget(hint_label)
         return card
 
     def _realtime_panel(self) -> QWidget:
@@ -547,7 +553,7 @@ class MainWindow(QMainWindow):
         rows = [
             ("异常次数", self.stats_abnormal_count_value),
             ("平均健康评分", self.avg_score_value),
-            ("最长低头时间", QLabel("--")),
+            ("最长低头时间", self.longest_head_down_value),
             ("久坐提醒次数", QLabel("--")),
         ]
         for row, (name, value) in enumerate(rows, start=1):
@@ -645,11 +651,15 @@ class MainWindow(QMainWindow):
             button.setChecked(button_index == index)
 
     def update_sample(self, sample: NeckSensorSample, sample_count: int) -> None:
+        now = datetime.now()
         state_key = self._state_key(sample.state)
         if state_key != self._current_state_key:
+            if self._current_state_key == "HEAD_DOWN" and self._current_state_started_at is not None:
+                self._record_head_down_duration(self._current_state_started_at, now)
             self._current_state_key = state_key
-            self._current_state_started_at = datetime.now()
+            self._current_state_started_at = now
         self._update_current_state_duration()
+        self._update_longest_head_down_display(now)
 
         abnormal = sample.state != "正常"
         if abnormal and not self._was_abnormal:
@@ -678,6 +688,10 @@ class MainWindow(QMainWindow):
         self.posture_image.set_state(sample.state)
         self.posture_gauge.set_state(sample.state)
         self.mode_value.setText(self._display_mode(sample.mode))
+        if self.vibration_strength_hint_label is not None:
+            self.vibration_strength_hint_label.setText(
+                f"震动强度：{self._display_vibration_strength(sample.vibration_strength)}"
+            )
         self.abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.dashboard_abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.stats_abnormal_count_value.setText(f"{self._abnormal_count} 次")
@@ -762,6 +776,17 @@ class MainWindow(QMainWindow):
             return "普通模式"
         return mode_names.get(mode.upper(), mode.replace("_", " "))
 
+    @staticmethod
+    def _display_vibration_strength(level: int | None) -> str:
+        strength_names = {
+            0: "低",
+            1: "中",
+            2: "高",
+        }
+        if level is None:
+            return "--"
+        return strength_names.get(level, "--")
+
     def _toggle_receiving(self) -> None:
         if self.receive_button.isChecked():
             self.receive_button.setText("停止接收")
@@ -807,6 +832,7 @@ class MainWindow(QMainWindow):
         self.time_value.setText(f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self._update_wear_time_display()
         self._update_current_state_duration()
+        self._update_longest_head_down_display()
 
     def _set_wear_tracking(self, connected: bool) -> None:
         now = datetime.now()
@@ -850,6 +876,24 @@ class MainWindow(QMainWindow):
         self.current_state_duration_label.setText(
             f"持续时间 {self._format_duration(elapsed_seconds)}"
         )
+
+    def _update_longest_head_down_display(self, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        current_longest = self._longest_head_down_seconds
+        if self._current_state_key == "HEAD_DOWN" and self._current_state_started_at is not None:
+            current_longest = max(
+                current_longest,
+                max(0, int((now - self._current_state_started_at).total_seconds())),
+            )
+        if current_longest <= 0:
+            self.longest_head_down_value.setText("--")
+            return
+        self.longest_head_down_value.setText(self._format_duration(current_longest))
+
+    def _record_head_down_duration(self, started_at: datetime, ended_at: datetime) -> None:
+        elapsed_seconds = max(0, int((ended_at - started_at).total_seconds()))
+        if elapsed_seconds > self._longest_head_down_seconds:
+            self._longest_head_down_seconds = elapsed_seconds
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:

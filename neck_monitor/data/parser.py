@@ -59,7 +59,7 @@ class SensorDataParser:
         version = int(data.get("version", 1))
         if version != 1:
             raise ValueError(f"不支持的蓝牙协议版本：{version}")
-        required_fields = {"score", "state", "pitch", "roll", "mode"}
+        required_fields = {"score", "state", "pitch", "roll", "mode", "vibration_strength"}
         missing_fields = required_fields.difference(data)
         if missing_fields:
             missing = ", ".join(sorted(missing_fields))
@@ -74,6 +74,9 @@ class SensorDataParser:
         score = int(data["score"])
         pitch = float(data["pitch"])
         roll = float(data["roll"])
+        vibration_strength = int(data["vibration_strength"])
+        if vibration_strength not in (0, 1, 2):
+            raise ValueError("vibration_strength 瀛楁蹇呴』鍦?0-2 鑼冨洿鍐?")
         confidence_value = data.get("confidence")
         confidence = None if confidence_value is None else float(confidence_value)
         if not 0 <= score <= 100:
@@ -99,6 +102,7 @@ class SensorDataParser:
             pitch=pitch,
             roll=roll,
             mode=str(data["mode"]),
+            vibration_strength=vibration_strength,
             timestamp=timestamp,
             yaw=float(data.get("yaw", 0.0)),
             pressure=float(data.get("pressure", 0.0)),

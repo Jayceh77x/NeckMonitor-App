@@ -9,6 +9,7 @@ class NeckSensorSample:
     pitch: float
     roll: float
     mode: str
+    vibration_strength: int
     timestamp: datetime
     yaw: float
     pressure: float

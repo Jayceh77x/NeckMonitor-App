@@ -59,7 +59,7 @@ JDY-24M 只负责透明传输，不应修改 JSON 内容。
 最小可用帧：
 
 ```text
-{"version":1,"seq":1,"score":95,"state":"NORMAL","pitch":1.2,"roll":-0.5,"mode":0,"alert":0}\n
+{"version":1,"seq":1,"score":95,"state":"NORMAL","pitch":1.2,"roll":-0.5,"mode":0,"vibration_strength":1,"alert":0}\n
 ```
 
 字节流结尾必须是真实的换行字节 `0x0A`，不是字符 `\` 和字符 `n`。
@@ -77,6 +77,7 @@ STM32 建议每 500-1000 ms 发送一帧遥测数据。
 | `pitch` | 是 | number | 有限浮点数，单位 deg | STM32 姿态计算 |
 | `roll` | 是 | number | 有限浮点数，单位 deg | STM32 姿态计算 |
 | `mode` | 是 | integer | 0、1、2 | STM32 提醒模式 |
+| `vibration_strength` | 是 | integer | 0、1、2 | STM32 振动强度 |
 | `alert` | 是 | integer/bool | `0/1` 或 `false/true` | STM32 提醒事件 |
 | `confidence` | 建议 | number/null | 0.0-1.0 | STM32/NanoEdge AI |
 | `wear_minutes` | 建议 | integer | 0 或正整数，单位 min | STM32 佩戴计时 |
@@ -123,6 +124,16 @@ APP 将英文枚举自动转换为中文显示。不要发送不固定的自然�
 | `2` | 强提醒模式 | 强提醒策略 |
 
 如果固件需要增加模式，应先升级协议版本或与 APP 同步增加枚举，不能直接复用现有数字表示其他含义。
+
+### 振动强度枚举
+
+`vibration_strength` 表示振动输出强度，三档定义如下：
+
+| `vibration_strength` | APP 显示 | 含义 |
+| --- | --- | --- |
+| `0` | 低 | 低强度振动 |
+| `1` | 中 | 中强度振动 |
+| `2` | 高 | 高强度振动 |
 
 ## 7. `alert` 提醒事件规则
 
@@ -193,19 +204,19 @@ seq=103, alert=0
 正常姿态：
 
 ```text
-{"version":1,"seq":1024,"score":92,"state":"NORMAL","pitch":3.2,"roll":-1.5,"mode":0,"alert":0,"confidence":0.96,"wear_minutes":388,"target_minutes":480,"battery":85,"uptime_ms":325680,"device_name":"NeckMonitor-01","firmware":"v1.0.0"}\n
+{"version":1,"seq":1024,"score":92,"state":"NORMAL","pitch":3.2,"roll":-1.5,"mode":0,"vibration_strength":1,"alert":0,"confidence":0.96,"wear_minutes":388,"target_minutes":480,"battery":85,"uptime_ms":325680,"device_name":"NeckMonitor-01","firmware":"v1.0.0"}\n
 ```
 
 低头异常并触发提醒：
 
 ```text
-{"version":1,"seq":1025,"score":68,"state":"HEAD_DOWN","pitch":-24.7,"roll":2.1,"mode":0,"alert":1,"confidence":0.94,"wear_minutes":389,"target_minutes":480,"battery":85,"uptime_ms":326480}\n
+{"version":1,"seq":1025,"score":68,"state":"HEAD_DOWN","pitch":-24.7,"roll":2.1,"mode":0,"vibration_strength":2,"alert":1,"confidence":0.94,"wear_minutes":389,"target_minutes":480,"battery":85,"uptime_ms":326480}\n
 ```
 
 未启用或暂时没有置信度时：
 
 ```text
-{"version":1,"seq":1026,"score":88,"state":"NORMAL","pitch":2.0,"roll":0.6,"mode":1,"alert":0,"confidence":null}\n
+{"version":1,"seq":1026,"score":88,"state":"NORMAL","pitch":2.0,"roll":0.6,"mode":1,"vibration_strength":1,"alert":0,"confidence":null}\n
 ```
 
 ## 11. STM32 组包参考
@@ -220,7 +231,7 @@ int tx_length = snprintf(
     sizeof(tx_buffer),
     "{\"version\":1,\"seq\":%lu,\"score\":%u,"
     "\"state\":\"%s\",\"pitch\":%.2f,\"roll\":%.2f,"
-    "\"mode\":%u,\"alert\":%u,\"confidence\":%.3f,"
+    "\"mode\":%u,\"vibration_strength\":%u,\"alert\":%u,\"confidence\":%.3f,"
     "\"wear_minutes\":%u,\"battery\":%u,\"uptime_ms\":%lu}\n",
     (unsigned long)telemetry_seq,
     health_score,
@@ -228,6 +239,7 @@ int tx_length = snprintf(
     pitch_deg,
     roll_deg,
     reminder_mode,
+    vibration_strength,
     alert_active,
     confidence,
     wear_minutes,
@@ -294,7 +306,7 @@ APP 支持：
 APP 会拒绝：
 
 - 不完整或非法 JSON。
-- 缺少 `score`、`state`、`pitch`、`roll`、`mode`。
+- 缺少 `score`、`state`、`pitch`、`roll`、`mode`、`vibration_strength`。
 - `version` 不是 1。
 - `score` 不在 0-100。
 - `confidence` 不为 `null` 且不在 0.0-1.0。
@@ -318,7 +330,8 @@ APP 会拒绝：
 6. Pitch、Roll 正负方向与文档一致。
 7. `score`、`confidence`、`battery` 不越界。
 8. `mode=0/1/2` 在 APP 中显示正确。
-9. `alert` 连续两帧为 1 时 APP 只统计一次提醒。
+9. `vibration_strength=0/1/2` 在 APP 中显示正确。
+10. `alert` 连续两帧为 1 时 APP 只统计一次提醒。
 10. 人工把一帧拆成两次发送，APP 仍能正确解析。
 11. 一次发送两帧，APP 能分别解析两条数据。
 12. 发送非法 JSON 时 APP 提示数据格式错误，下一条正确帧可以继续刷新。

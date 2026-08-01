@@ -91,7 +91,7 @@ self.bluetooth = BluetoothManager(
 APP 接收单行 JSON，每帧必须以真实换行符 `\n` 结尾。示例：
 
 ```json
-{"version":1,"seq":1,"score":92,"state":"NORMAL","pitch":12.5,"roll":3.2,"mode":0,"alert":0,"confidence":0.96}
+{"version":1,"seq":1,"score":92,"state":"NORMAL","pitch":12.5,"roll":3.2,"mode":0,"vibration_strength":1,"alert":0,"confidence":0.96}
 ```
 
 当前解析器要求的核心字段：
@@ -104,6 +104,7 @@ APP 接收单行 JSON，每帧必须以真实换行符 `\n` 结尾。示例：
 | `pitch` | number | 俯仰角，单位度 |
 | `roll` | number | 横滚角，单位度 |
 | `mode` | int/string | 提醒模式 |
+| `vibration_strength` | int | 振动强度，三档 `0/1/2` |
 | `alert` | int/bool | STM32 提醒事件标记 |
 | `confidence` | number/null | STM32/NanoEdge AI 输出的置信度 |
 | `timestamp` | string | 可选 ISO 8601 时间戳 |
@@ -201,7 +202,7 @@ python -m compileall neck_monitor
    - 数据链路为 `BluetoothManager -> SensorDataParser -> SensorDataCache -> MainWindow`
 
 3. 切换模拟数据格式为 JSON
-   - 当前核心字段包括 `score`、`state`、`pitch`、`roll`、`mode`
+   - 当前核心字段包括 `score`、`state`、`pitch`、`roll`、`mode`、`vibration_strength`
    - UI 可基于 JSON 数据实时刷新健康评分、当前状态、Pitch、Roll、历史记录等内容
 
 4. 完成竞赛展示风格 UI 设计
