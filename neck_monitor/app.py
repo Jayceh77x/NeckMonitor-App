@@ -18,7 +18,7 @@ class NeckMonitorApp:
             port_name=os.getenv("NECKMONITOR_SERIAL_PORT", "COM8"),
             baud_rate=int(os.getenv("NECKMONITOR_SERIAL_BAUD", "115200")),
             ble_name=os.getenv("NECKMONITOR_BLE_NAME", "JDY-24M"),
-            ble_address=os.getenv("NECKMONITOR_BLE_ADDRESS", "11:89:9A:A3:9C:11"),
+            ble_address=os.getenv("NECKMONITOR_BLE_ADDRESS", "11:89:9A:A3:97:E6"),
             source_mode=os.getenv("NECKMONITOR_SOURCE", BluetoothManager.SOURCE_BLE),
         )
         self.window = MainWindow()
