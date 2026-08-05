@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self._wear_started_at: datetime | None = None
         self._wear_accumulated_seconds = 0
         self._source_mode = "mock"
+        self._bluetooth_connected = False
         self._chart_limit = 180
         self._pitch_values: list[float] = []
         self._roll_values: list[float] = []
@@ -57,7 +58,9 @@ class MainWindow(QMainWindow):
         self.posture_value = QLabel("等待数据")
         self.mode_value = QLabel("--")
         self.wear_time_value = QLabel("--")
-        self.bluetooth_status_value = QLabel("JDY-24M BLE")
+        self.bluetooth_status_value = QLabel()
+        self.sidebar_status_value = QLabel()
+        self.sidebar_power_value = QLabel()
         self.data_source_value = QLabel("模拟数据")
         self.time_value = QLabel("--")
         self.score_gauge = ScoreGauge()
@@ -82,10 +85,11 @@ class MainWindow(QMainWindow):
         self.history_total_value = QLabel("--")
         self.history_abnormal_value = QLabel("0 次")
         self.history_avg_score_value = QLabel("--")
+        self.device_power_value = QLabel("--")
 
-        self.receive_button = AppButton("停止接收", role="primary")
+        self.receive_button = AppButton("开始接收", role="primary")
         self.receive_button.setCheckable(True)
-        self.receive_button.setChecked(True)
+        self.receive_button.setChecked(False)
         self.source_toggle_button = AppButton("切换到模拟数据", role="primary")
         self.history_table = QTableWidget(0, 7)
         self.pages = QStackedWidget()
@@ -99,6 +103,8 @@ class MainWindow(QMainWindow):
         self._clock.timeout.connect(self._update_clock)
         self._clock.start(1000)
         self._update_clock()
+        self._sync_connection_status()
+        self._sync_power_status()
 
     def _build_ui(self) -> None:
         self.setStyleSheet(
@@ -230,18 +236,16 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(8)
 
-        status = QLabel("蓝牙  已连接")
-        status.setStyleSheet("color: #50d579; font-weight: 800;")
+        self.sidebar_status_value.setStyleSheet("font-weight: 800;")
         device = QLabel("NeckMonitor-01")
         device.setStyleSheet("color: #ffffff; font-weight: 700;")
-        battery = QLabel("电量：--")
-        battery.setStyleSheet("color: #b9c7d8;")
+        self.sidebar_power_value.setStyleSheet("color: #b9c7d8;")
         version = QLabel("版本：v1.0.0")
         version.setStyleSheet("color: #8fa3bb;")
 
-        layout.addWidget(status)
+        layout.addWidget(self.sidebar_status_value)
         layout.addWidget(device)
-        layout.addWidget(battery)
+        layout.addWidget(self.sidebar_power_value)
         layout.addSpacing(10)
         layout.addWidget(version)
         return panel
@@ -269,17 +273,13 @@ class MainWindow(QMainWindow):
 
         title = QLabel("智能颈椎监测系统")
         title.setStyleSheet("font-size: 28px; font-weight: 900; color: #0d1728;")
-        badge = QLabel("蓝牙  设备已连接")
-        badge.setStyleSheet(
-            "background: #dcecff; color: #1463ff; padding: 9px 16px; "
-            "border-radius: 18px; font-weight: 800;"
-        )
+        self.bluetooth_status_value.setAlignment(Qt.AlignCenter)
 
         self.receive_button.clicked.connect(self._toggle_receiving)
         self.time_value.setStyleSheet("color: #667085; font-size: 15px;")
 
         layout.addWidget(title)
-        layout.addWidget(badge)
+        layout.addWidget(self.bluetooth_status_value)
         layout.addStretch(1)
         layout.addWidget(self.time_value)
         layout.addWidget(self.receive_button)
@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
             ("设备名称", "NeckMonitor-01"),
             ("固件版本", "--"),
             ("蓝牙信号", "--"),
-            ("电量", "--"),
+            ("供电状态", "--"),
         ]
         for row, (name, value) in enumerate(rows, start=1):
             layout.addWidget(QLabel(name), row, 0)
@@ -585,6 +585,8 @@ class MainWindow(QMainWindow):
             value_label.setStyleSheet("font-weight: 800;")
             if name == "蓝牙信号":
                 self.device_signal_value = value_label
+            if name == "供电状态":
+                self.device_power_value = value_label
             layout.addWidget(value_label, row, 1)
         return card
 
@@ -696,7 +698,6 @@ class MainWindow(QMainWindow):
         self.dashboard_abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.stats_abnormal_count_value.setText(f"{self._abnormal_count} 次")
         self.history_abnormal_value.setText(f"{self._abnormal_count} 次")
-        self.bluetooth_status_value.setText(self._connected_status_text())
         self.pitch_value.setText(f"{sample.pitch:.1f}°")
         self.roll_value.setText(f"{sample.roll:.1f}°")
         self.dashboard_pitch_value.setText(f"{sample.pitch:.1f}°")
@@ -790,18 +791,16 @@ class MainWindow(QMainWindow):
     def _toggle_receiving(self) -> None:
         if self.receive_button.isChecked():
             self.receive_button.setText("停止接收")
-            self.bluetooth_status_value.setText(self._connected_status_text())
             self.start_requested.emit()
             return
 
         self.receive_button.setText("开始接收")
-        self.bluetooth_status_value.setText("已停止")
         self.stop_requested.emit()
 
     def update_bluetooth_status(self, connected: bool) -> None:
-        status = self._connected_status_text() if connected else "已停止"
-        self.bluetooth_status_value.setText(status)
-        self.bluetooth_status_value.setToolTip("")
+        self._bluetooth_connected = connected
+        self._sync_connection_status()
+        self._sync_power_status()
         self.receive_button.setChecked(connected)
         self.receive_button.setText("停止接收" if connected else "开始接收")
         self._set_wear_tracking(connected)
@@ -818,16 +817,19 @@ class MainWindow(QMainWindow):
         else:
             self.data_source_value.setText("串口数据")
             self.source_toggle_button.setText("切换到模拟数据")
-        if self.receive_button.isChecked():
-            self.bluetooth_status_value.setText(self._connected_status_text())
+        self._sync_connection_status()
+        self._sync_power_status()
 
     def show_data_error(self, message: str) -> None:
-        self.bluetooth_status_value.setText("数据格式错误")
         self.bluetooth_status_value.setToolTip(message)
+        self.sidebar_status_value.setToolTip(message)
 
     def show_connection_error(self, message: str) -> None:
-        self.bluetooth_status_value.setText("连接错误")
+        self._bluetooth_connected = False
+        self._sync_connection_status()
+        self._sync_power_status()
         self.bluetooth_status_value.setToolTip(message)
+        self.sidebar_status_value.setToolTip(message)
         self.receive_button.setChecked(False)
         self.receive_button.setText("开始接收")
 
@@ -910,12 +912,12 @@ class MainWindow(QMainWindow):
         next_source = "ble" if self._source_mode == "mock" else "mock"
         self.source_switch_requested.emit(next_source)
 
-    def _connected_status_text(self) -> str:
+    def _status_text(self) -> str:
         if self._source_mode == "ble":
-            return "真实蓝牙接收中"
+            return "蓝牙已连接" if self._bluetooth_connected else "蓝牙未连接"
         if self._source_mode == "serial":
-            return "串口接收中"
-        return "模拟数据接收中"
+            return "串口已连接" if self._bluetooth_connected else "串口未连接"
+        return "模拟数据"
 
     @staticmethod
     def _display_source_name(source_mode: str) -> str:
@@ -924,3 +926,72 @@ class MainWindow(QMainWindow):
         if source_mode == "serial":
             return "串口数据"
         return "模拟数据"
+
+    def _sync_connection_status(self) -> None:
+        text = self._status_text()
+        if hasattr(self, "bluetooth_status_value"):
+            self.bluetooth_status_value.setText(text)
+            self.bluetooth_status_value.setToolTip("")
+            self.bluetooth_status_value.setStyleSheet(self._status_badge_style())
+        if hasattr(self, "sidebar_status_value"):
+            self.sidebar_status_value.setText(text)
+            self.sidebar_status_value.setToolTip("")
+            self.sidebar_status_value.setStyleSheet(self._sidebar_status_style())
+
+    def _sync_power_status(self) -> None:
+        text = self._power_status_text()
+        if hasattr(self, "sidebar_power_value"):
+            self.sidebar_power_value.setText(text)
+            self.sidebar_power_value.setStyleSheet(self._sidebar_power_style())
+        if hasattr(self, "device_power_value"):
+            self.device_power_value.setText(text)
+            self.device_power_value.setStyleSheet(self._device_power_style())
+
+    def _status_badge_style(self) -> str:
+        if self._source_mode == "mock":
+            background = "#dcecff"
+            foreground = "#1463ff"
+        elif self._source_mode == "ble":
+            if self._bluetooth_connected:
+                background = "#dcfce7"
+                foreground = "#1a9f55"
+            else:
+                background = "#fee4e2"
+                foreground = "#d92d20"
+        else:
+            if self._bluetooth_connected:
+                background = "#e8eef6"
+                foreground = "#667085"
+            else:
+                background = "#f2f4f7"
+                foreground = "#667085"
+        return (
+            f"background: {background}; color: {foreground}; padding: 9px 16px; "
+            "border-radius: 18px; font-weight: 800;"
+        )
+
+    def _sidebar_status_style(self) -> str:
+        if self._source_mode == "mock":
+            color = "#7fb4ff"
+        elif self._source_mode == "ble":
+            color = "#50d579" if self._bluetooth_connected else "#fda29b"
+        else:
+            color = "#c8d5e5" if self._bluetooth_connected else "#8fa3bb"
+        return f"color: {color}; font-weight: 800;"
+
+    def _power_status_text(self) -> str:
+        if self._source_mode == "mock":
+            return "模拟供电"
+        return "供电正常" if self._bluetooth_connected else "未供电"
+
+    def _sidebar_power_style(self) -> str:
+        if self._source_mode == "mock":
+            return "color: #7fb4ff; font-weight: 800;"
+        color = "#50d579" if self._bluetooth_connected else "#8fa3bb"
+        return f"color: {color}; font-weight: 800;"
+
+    def _device_power_style(self) -> str:
+        if self._source_mode == "mock":
+            return "font-weight: 800; color: #1463ff;"
+        color = "#1a9f55" if self._bluetooth_connected else "#8fa3bb"
+        return f"font-weight: 800; color: {color};"

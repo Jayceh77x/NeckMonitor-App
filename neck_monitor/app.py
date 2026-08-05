@@ -35,7 +35,6 @@ class NeckMonitorApp:
 
     def start(self) -> None:
         self.window.show()
-        self.bluetooth.start()
 
     def _handle_raw_data(self, chunk: bytes | str) -> None:
         try:
