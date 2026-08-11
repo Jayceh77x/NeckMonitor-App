@@ -4,7 +4,7 @@ import threading
 from PySide6.QtCore import QObject, QThread, Signal
 
 
-FFE1_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
+FEE1_UUID = "0000fee1-0000-1000-8000-00805f9b34fb"
 
 
 class _BleWorker(QThread):
@@ -58,7 +58,7 @@ class _BleWorker(QThread):
             try:
                 await client.start_notify(self._char_uuid, on_notify)
             except Exception as exc:
-                raise RuntimeError(f"无法订阅 FFE1 特征 {self._char_uuid}: {exc}") from exc
+                raise RuntimeError(f"无法订阅 FEE1 特征 {self._char_uuid}: {exc}") from exc
 
             try:
                 while not self._stop_requested.is_set() and client.is_connected:
@@ -102,7 +102,7 @@ class BluetoothBleClient(QObject):
         self,
         device_name: str = "JDY-24M",
         address: str | None = None,
-        char_uuid: str = FFE1_UUID,
+        char_uuid: str = FEE1_UUID,
         scan_timeout: float = 5.0,
         parent: QObject | None = None,
     ) -> None:

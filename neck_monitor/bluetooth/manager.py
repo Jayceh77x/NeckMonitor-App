@@ -1,6 +1,6 @@
 from PySide6.QtCore import QObject, Signal
 
-from neck_monitor.bluetooth.ble_client import BluetoothBleClient, FFE1_UUID
+from neck_monitor.bluetooth.ble_client import BluetoothBleClient, FEE1_UUID
 from neck_monitor.bluetooth.client import BluetoothSerialClient
 from neck_monitor.bluetooth.mock_source import MockDataSource
 
@@ -21,7 +21,7 @@ class BluetoothManager(QObject):
         baud_rate: int = 115200,
         ble_name: str = "JDY-24M",
         ble_address: str | None = None,
-        ble_char_uuid: str = FFE1_UUID,
+        ble_char_uuid: str = FEE1_UUID,
         interval_ms: int = 800,
         simulation: bool = False,
         source_mode: str | None = None,
