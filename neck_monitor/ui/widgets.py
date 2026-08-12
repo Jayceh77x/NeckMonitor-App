@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-import math
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
-    QTransform,
 )
 from PySide6.QtWidgets import QFrame, QPushButton, QSizePolicy, QWidget
 
@@ -410,21 +408,12 @@ class LineChart(QWidget):
 
 
 class PostureGauge(QWidget):
-    """Segmented posture-state indicator driven only by the STM32 state field."""
-
-    _LABELS = ("仰头", "左倾", "正常", "右倾", "低头")
+    """Compact single-state posture indicator driven only by the STM32 state field."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = "等待数据"
-        head_neck_pixmap = QPixmap(
-            str(Path(__file__).resolve().parent / "assets" / "posture" / "头部轮廓.png")
-        )
-        self._head_neck_pixmap = head_neck_pixmap.transformed(
-            QTransform().scale(-1.0, 1.0),
-            Qt.SmoothTransformation,
-        )
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(136)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_state(self, state: str) -> None:
@@ -438,98 +427,56 @@ class PostureGauge(QWidget):
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-
-        width = max(150.0, min(self.width() - 76.0, 340.0))
-        arc_height = max(62.0, min(width * 0.42, self.height() - 62.0))
-        arc_rect = QRectF((self.width() - width) / 2, 36, width, arc_height)
-        active_index = self._active_index(self._state)
-        segment_span = -40
-        gap = 4
-        drawn_span = segment_span + gap
-
-        for index in range(5):
-            color = QColor("#dfe5ec")
-            if index == active_index:
-                color = QColor("#31b968") if index == 2 else QColor("#f59e0b")
-            pen = QPen(color, 9)
-            pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(pen)
-            start = 200 - index * 44
-            painter.drawArc(arc_rect, start * 16, drawn_span * 16)
-
-        label_font = QFont("Microsoft YaHei")
-        label_font.setPointSize(8)
-        label_font.setWeight(QFont.DemiBold)
-        painter.setFont(label_font)
-        center = arc_rect.center()
-        label_radius_x = arc_rect.width() / 2 + 20
-        label_radius_y = arc_rect.height() / 2 + 15
-        for index, label in enumerate(self._LABELS):
-            segment_start = 200 - index * 44
-            angle = math.radians(segment_start + drawn_span / 2)
-            x = center.x() + math.cos(angle) * label_radius_x
-            y = center.y() - math.sin(angle) * label_radius_y
-            if index == 0:
-                x -= 10
-            elif index == len(self._LABELS) - 1:
-                x += 10
-            label_width = 48.0
-            label_height = 22.0
-            label_x = max(0.0, min(x - label_width / 2, self.width() - label_width))
-            label_y = max(2.0, min(y - label_height / 2, self.height() - label_height - 28.0))
-            label_color = QColor("#758195")
-            if index == active_index:
-                label_color = QColor("#31b968") if active_index == 2 else QColor("#f59e0b")
-            painter.setPen(label_color)
-            painter.drawText(
-                QRectF(label_x, label_y, label_width, label_height),
-                Qt.AlignCenter,
-                label,
-            )
-
-        if not self._head_neck_pixmap.isNull():
-            image_height = max(46, min(70, self.height() - 70))
-            scaled = self._head_neck_pixmap.scaled(
-                int(image_height),
-                int(image_height),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            image_bottom = self.height() - 30
-            image_rect = QRectF(
-                center.x() - scaled.width() / 2,
-                image_bottom - scaled.height(),
-                scaled.width(),
-                scaled.height(),
-            )
-            painter.drawPixmap(image_rect, scaled, QRectF(scaled.rect()))
-
-        state_color = QColor("#31b968") if active_index == 2 else QColor("#f59e0b")
-        if active_index < 0:
-            state_color = QColor("#758195")
-        state_font = QFont("Microsoft YaHei")
-        state_font.setPointSize(10)
-        state_font.setWeight(QFont.Bold)
-        painter.setFont(state_font)
-        painter.setPen(state_color)
-        painter.drawText(
-            QRectF(8, self.height() - 27, self.width() - 16, 24),
-            Qt.AlignCenter,
-            self._state,
-        )
+        active_state = self._active_state(self._state)
+        if active_state == "normal":
+            self._draw_status_block(painter, "正常", "#31b968")
+        elif active_state == "abnormal":
+            self._draw_status_block(painter, "姿势异常", "#f59e0b")
+        else:
+            self._draw_status_block(painter, "等待数据", "#758195")
 
     @staticmethod
-    def _active_index(state: str) -> int:
+    def _active_state(state: str) -> str:
         normalized = state.upper()
-        if "NORMAL" in normalized or "正常" in state:
-            return 2
-        if "HEAD_UP" in normalized or "仰头" in state or "后仰" in state:
-            return 0
-        if "TILT_LEFT" in normalized or "左倾" in state:
-            return 1
-        if "TILT_RIGHT" in normalized or "右倾" in state or "侧倾" in state:
-            return 3
-        if "HEAD_DOWN" in normalized or "低头" in state or "浣庡ご" in state:
-            return 4
-        return -1
+        if "NORMAL" in normalized or "正常" in state or "良好" in state:
+            return "normal"
+        if any(
+            token in normalized
+            for token in ("HEAD_DOWN", "HEAD_UP", "TILT_LEFT", "TILT_RIGHT", "TILT")
+        ) or any(
+            token in state
+            for token in ("低头", "仰头", "后仰", "左倾", "右倾", "侧倾", "异常", "浣庡ご")
+        ):
+            return "abnormal"
+        return "unknown"
+
+    @staticmethod
+    def _draw_status_block(
+        painter: QPainter,
+        label: str,
+        color: str,
+    ) -> None:
+        base_color = QColor(color)
+        viewport_rect = QRectF(painter.viewport()).adjusted(8, 8, -8, -8)
+        rect = QRectF(
+            0,
+            0,
+            viewport_rect.width() * 0.70,
+            viewport_rect.height() * 0.70,
+        )
+        rect.moveCenter(viewport_rect.center())
+
+        border = QColor(base_color)
+        border.setAlpha(230)
+        background = QColor(base_color)
+        background.setAlpha(20)
+        painter.setPen(QPen(border, 2.4))
+        painter.setBrush(background)
+        painter.drawRoundedRect(rect, 10, 10)
+
+        label_font = QFont("Microsoft YaHei")
+        label_font.setPointSize(max(16, min(26, int(rect.height() * 0.26))))
+        label_font.setWeight(QFont.Black)
+        painter.setFont(label_font)
+        painter.setPen(base_color)
+        painter.drawText(rect, Qt.AlignCenter, label)
